@@ -28,15 +28,15 @@ contract DxMarketMaker {
         returns (bool)
     {
         // fund
-        require(weth.transferFrom(msg.sender, this, amountEthWei));
+        require(weth.transferFrom(msg.sender, address(this), amountEthWei));
 
-        weth.approve(dx, amountEthWei);
-        dx.deposit(weth, amountEthWei);
+        weth.approve(address(dx), amountEthWei);
+        dx.deposit(address(weth), amountEthWei);
 
         // add token pair
         dx.addTokenPair(
-            weth,
-            token,
+            address(weth),
+            address(token),
             amountEthWei,   // weth funding
             0,              // other token funding
             tokenToEthNum,
