@@ -130,6 +130,7 @@ contract('DxMarketMaker', async (accounts) => {
         dbg(`   lister WETH balance is ${await dx.balances(weth.address, lister)}`)
         dbg(`   lister KNC balance is ${await dx.balances(knc.address, lister)}`)
 
+        dbg(`XXX`)
         const [fundsRetuned, frtsIssued] = await dx.claimSellerFunds.call(
             weth.address,
             knc.address,
@@ -137,6 +138,7 @@ contract('DxMarketMaker', async (accounts) => {
             auctionIndex,
             {from: lister}
         )
+        dbg(`YYY`)
         await dx.claimSellerFunds(
             weth.address,
             knc.address,
@@ -223,7 +225,7 @@ contract('DxMarketMaker', async (accounts) => {
         nextAuctionIndex.should.be.bignumber.equal(2)
     })
 
-    it.only("seller can sell KNC and buyer can buy it", async () => {
+    it.skip("seller can sell KNC and buyer can buy it", async () => {
         const knc = await deployTokenAddToDxAndClearFirstAuction()
         const kncSymbol = await knc.symbol()
 
@@ -349,6 +351,62 @@ contract('DxMarketMaker', async (accounts) => {
         dbg(`seller DX WETH balance is ${await dx.balances(weth.address, seller1)}`)
 
         assert(false)
+    })
+
+    it("should have a kyber network proxy configured", async () => {
+        const kyberNetworkProxy = await dxmm.kyberNetworkProxy()
+
+        kyberNetworkProxy.should.exist
+    })
+
+    it("reject creating dxmm with DutchExchange address 0", async () => {
+        try {
+            await DxMarketMaker.new(
+                0,
+                weth.address,
+                await dxmm.kyberNetworkProxy()
+            )
+            assert(false, "throw was expected in line above.")
+        } catch(e){
+            assert(
+                Helper.isRevertErrorMessage(e),
+                "expected revert but got: " + e)
+        }
+    })
+
+    it("reject creating dxmm with WETH address 0", async () => {
+        try {
+            await DxMarketMaker.new(
+                dx.address,
+                0,
+                await dxmm.kyberNetworkProxy()
+            )
+        } catch(e){
+            assert(
+                Helper.isRevertErrorMessage(e),
+                "expected revert but got: " + e)
+        }
+    })
+
+    it("reject creating dxmm with KyberNetworkProxy address 0", async () => {
+        try {
+            await DxMarketMaker.new(dx.address, weth.address, 0)
+        } catch(e){
+            assert(
+                Helper.isRevertErrorMessage(e),
+                "expected revert but got: " + e)
+        }
+    })
+
+    it("should allow withdrawing from dxmm", async () => {
+        await weth.deposit({value: 1e10, from: admin})
+        const initialWethBalance = await weth.balanceOf(admin)
+
+        await weth.transfer(dxmm.address, 1e10, {from: admin})
+        await dxmm.withdrawToken(weth.address, 1e10, admin), {from: admin}
+
+        const wethBalance = await weth.balanceOf(admin)
+        wethBalance.should.be.bignumber.equal(initialWethBalance)
     })
 
     it("should clear the auction when we buy everything")
