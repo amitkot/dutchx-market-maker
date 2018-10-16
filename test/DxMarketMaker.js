@@ -32,28 +32,35 @@ contract('DxMarketMaker', async (accounts) => {
         return 1e20
     }
 
-    before('setup accounts', async () => {
-        admin = accounts[0]
-        seller1 = accounts[1]
-        buyer1 = accounts[2]
-        weth = await EtherToken.deployed()
-        dxmm = await DxMarketMaker.deployed()
-        dx = DutchExchange.at(await dxmm.dx())
-    })
+    const dbgVolumesAndPrices = async (st, bt, auctionIndex) => {
+        const stSymbol = await st.symbol()
+        const btSymbol = await bt.symbol()
+        dbg(`... ST: ${stSymbol}, BT: ${btSymbol}`)
+        const sellVolume = await dx.sellVolumesCurrent(st.address, bt.address)
+        const buyVolume = await dx.buyVolumes(st.address, bt.address)
+        const [num, den] = await dx.getCurrentAuctionPrice(
+            st.address,
+            bt.address,
+            auctionIndex
+        )
+        const remainingSellVolume = sellVolume - buyVolume * num / den
+        const remainingBuyVolume = sellVolume * num / den - buyVolume
+        dbg(`...... sellVolumesCurrent: ${sellVolume} ${stSymbol}`)
+        dbg(`...... buyVolumes: ${buyVolume} ${btSymbol}`)
+        dbg(`...... price ${stSymbol}/${btSymbol} is ${num}/${den}`)
+        dbg(`...... remaining SELL tokens: ${remainingSellVolume} ${stSymbol}`)
+        dbg(`...... remaining BUY tokens: ${remainingBuyVolume} ${btSymbol}`)
+        return [remainingSellVolume, remainingBuyVolume]
+    }
 
-    // beforeEach('setup contract for each test', async () => {
-    //     dxmm = DxMarketMaker.new()
-    // })
-
-    it("should have deployed the contract", async () => {
-        dxmm.should.exist
-    })
-
-    it("admin should deploy token, add to dx, and conclude the first auction", async () => {
+    async function deployTokenAddToDxAndClearFirstAuction() {
         const lister = admin
         const initialWethWei = 1e20
         const knc = await deployToken()
         const kncSymbol = await knc.symbol()
+        dbg(`======================================`)
+        dbg(`= Start initializing ${kncSymbol}`)
+        dbg(`======================================`)
         dbg(`\n--- deployed ${kncSymbol}`)
 
         await weth.deposit({value: 1e22, from: lister})
@@ -80,29 +87,9 @@ contract('DxMarketMaker', async (accounts) => {
         const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
         dbg(`\n--- waited 6 hours for auction ${auctionIndex} to start`)
 
-        const dbgVolumesAndPrices = async (st, bt) => {
-            const stSymbol = await st.symbol()
-            const btSymbol = await bt.symbol()
-            dbg(`... ST: ${stSymbol}, BT: ${btSymbol}`)
-            const sellVolume = await dx.sellVolumesCurrent(st.address, bt.address)
-            const buyVolume = await dx.buyVolumes(st.address, bt.address)
-            const [num, den] = await dx.getCurrentAuctionPrice(
-                st.address,
-                bt.address,
-                auctionIndex
-            )
-            const remainingSellVolume = sellVolume - buyVolume * num / den
-            const remainingBuyVolume = sellVolume * num / den - buyVolume
-            dbg(`...... sellVolumesCurrent: ${sellVolume} ${stSymbol}`)
-            dbg(`...... buyVolumes: ${buyVolume} ${btSymbol}`)
-            dbg(`...... price ${stSymbol}/${btSymbol} is ${num}/${den}`)
-            dbg(`...... remaining SELL tokens: ${remainingSellVolume} ${stSymbol}`)
-            dbg(`...... remaining BUY tokens: ${remainingBuyVolume} ${btSymbol}`)
-            return [remainingSellVolume, remainingBuyVolume]
-        }
         dbg(`\n--- available for auction:`)
-        const [, remainingBuyVolume] = await dbgVolumesAndPrices(weth, knc)
-        await dbgVolumesAndPrices(knc, weth)
+        const [, remainingBuyVolume] = await dbgVolumesAndPrices(weth, knc, auctionIndex)
+        await dbgVolumesAndPrices(knc, weth, auctionIndex)
 
         dbg(`\n--- lister wants to buy it all`)
         dbg(`fee is ${await dx.getFeeRatio(lister)}`)
@@ -133,8 +120,8 @@ contract('DxMarketMaker', async (accounts) => {
         )
         dbg(`\n--- lister bought ${buyAmount} ${kncSymbol}`)
         dbg(`\n--- remaining:`)
-        await dbgVolumesAndPrices(weth, knc)
-        await dbgVolumesAndPrices(knc, weth)
+        await dbgVolumesAndPrices(weth, knc, auctionIndex)
+        await dbgVolumesAndPrices(knc, weth, auctionIndex)
 
         const currentAuctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
         dbg(`\n--- is auction still open? ${currentAuctionIndex == auctionIndex}`)
@@ -147,13 +134,15 @@ contract('DxMarketMaker', async (accounts) => {
             weth.address,
             knc.address,
             lister,
-            auctionIndex
+            auctionIndex,
+            {from: lister}
         )
         await dx.claimSellerFunds(
             weth.address,
             knc.address,
             lister,
-            auctionIndex
+            auctionIndex,
+            {from: lister}
         )
         dbg(`\n--- lister claimed seller funds`)
         dbg(`claimed funds S:weth, B:knc: ${fundsRetuned}`)
@@ -162,13 +151,15 @@ contract('DxMarketMaker', async (accounts) => {
             weth.address,
             knc.address,
             lister,
-            auctionIndex
+            auctionIndex,
+            {from: lister}
         )
         await dx.claimBuyerFunds(
             weth.address,
             knc.address,
             lister,
-            auctionIndex
+            auctionIndex,
+            {from: lister}
         )
         dbg(`\n--- lister claimed buyer funds`)
         dbg(`claimed funds S:weth, B:knc: ${fundsRetuned1}`)
@@ -177,13 +168,15 @@ contract('DxMarketMaker', async (accounts) => {
             knc.address,
             weth.address,
             lister,
-            auctionIndex
+            auctionIndex,
+            {from: lister}
         )
         await dx.claimBuyerFunds(
             knc.address,
             weth.address,
             lister,
-            auctionIndex
+            auctionIndex,
+            {from: lister}
         )
         dbg(`claimed funds S:knc, B:weth: ${fundsRetuned2}`)
 
@@ -195,14 +188,165 @@ contract('DxMarketMaker', async (accounts) => {
         dbg(`   lister WETH balance is ${await weth.balanceOf(lister)}`)
         dbg(`   lister KNC balance is ${await knc.balanceOf(lister)}`)
 
-        await dx.withdraw(weth.address, listerWethBalance)
-        await dx.withdraw(knc.address, listerKncBalance)
+        await dx.withdraw(weth.address, listerWethBalance, {from: lister})
+        await dx.withdraw(knc.address, listerKncBalance, {from: lister})
         dbg(`--- lister withdrew WETH and KNC balances`)
         dbg(`+++ current lister balance:`)
         dbg(`   lister DX WETH balance is ${await dx.balances(weth.address, lister)}`)
         dbg(`   lister DX KNC balance is ${await dx.balances(knc.address, lister)}`)
         dbg(`   lister WETH balance is ${await weth.balanceOf(lister)}`)
         dbg(`   lister KNC balance is ${await knc.balanceOf(lister)}`)
+
+        dbg(`======================================`)
+        dbg(`= Finished initializing ${kncSymbol}`)
+        dbg(`======================================`)
+        return knc
+    }
+
+    before('setup accounts', async () => {
+        admin = accounts[0]
+        seller1 = accounts[1]
+        buyer1 = accounts[2]
+        weth = await EtherToken.deployed()
+        dxmm = await DxMarketMaker.deployed()
+        dx = DutchExchange.at(await dxmm.dx())
+    })
+
+    it("should have deployed the contract", async () => {
+        dxmm.should.exist
+    })
+
+    it("admin should deploy token, add to dx, and conclude the first auction", async () => {
+        const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+        const nextAuctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+        nextAuctionIndex.should.be.bignumber.equal(2)
+    })
+
+    it.only("seller can sell KNC and buyer can buy it", async () => {
+        const knc = await deployTokenAddToDxAndClearFirstAuction()
+        const kncSymbol = await knc.symbol()
+
+        // TODO: use oracle, last price, etc.
+        const enoughKncToStartAuction = 1e22
+        const kncSellAmount = enoughKncToStartAuction
+        await knc.transfer(seller1, kncSellAmount, {from: admin})
+        dbg(`\n--- seller now has ${await knc.balanceOf(seller1)} ${kncSymbol}`)
+
+        dbg(`next auction starts at ${await dx.getAuctionStart(knc.address, weth.address)}`)
+
+        await knc.approve(dx.address, kncSellAmount, {from: seller1})
+        let [newBal, auctionIndex, newSellerBal] = await dx.depositAndSell.call(
+            knc.address,
+            weth.address,
+            kncSellAmount,
+            {from: seller1}
+        )
+        await dx.depositAndSell(
+            knc.address,
+            weth.address,
+            kncSellAmount,
+            {from: seller1}
+        )
+        dbg(`\n--- seller called depositAndSell: newBal: ${newBal}, auctionIndex: ${auctionIndex}, newSellerBal: ${newSellerBal}`)
+        dbg(`seller DX WETH balance is ${await dx.balances(weth.address, seller1)}`)
+        dbg(`seller DX KNC balance is ${await dx.balances(knc.address, seller1)}`)
+        await dbgVolumesAndPrices(knc, weth, auctionIndex)
+
+        const timeNow = await blockChainTime()
+        const auctionStartTime = await dx.getAuctionStart(knc.address, weth.address)
+        const secondsToWait = auctionStartTime - timeNow
+        dbg(`time now is ${timeNow}`)
+        dbg(`next auction starts at ${auctionStartTime} (in ${secondsToWait} seconds)`)
+
+        await waitTimeInSeconds(secondsToWait)
+        dbg(`\n--- waited until auction started`)
+        dbg(`time now is ${await blockChainTime()}`)
+        await dbgVolumesAndPrices(knc, weth, auctionIndex)
+
+        // now check if buyer wants to buyAmount
+        const [lastNum, lastDen] = await dx.getPriceOfTokenInLastAuction(knc.address)
+        const targetPrice = lastNum / lastDen
+        dbg(`\n--- buyer checks prices`)
+        dbg(`buyer wants to buy at price of ${targetPrice}`)
+
+        let num, den
+        while(true) {
+            [num, den] = await dx.getCurrentAuctionPrice(
+                knc.address,
+                weth.address,
+                auctionIndex
+            )
+            if (num/den > targetPrice) {
+                dbg(`... at ${await blockChainTime()} price is ${num/den} -> waiting 10 minutes.`)
+                await waitTimeInSeconds(10 * 60)
+            } else {
+                dbg(`... at ${await blockChainTime()} price is ${num/den} -> Done waiting!`)
+                break
+            }
+        }
+
+        dbg(`\n--- buyer wants to buy everything`)
+        const [, remainingBuyVolume] = await dbgVolumesAndPrices(knc, weth, auctionIndex)
+
+        await weth.deposit({value: remainingBuyVolume, from: buyer1})
+        await weth.approve(dx.address, remainingBuyVolume, {from: buyer1})
+        await dx.deposit(weth.address, remainingBuyVolume, {from: buyer1})
+        dbg(`buyer converted to WETH and deposited to DX`)
+        dbg(`buyer DX WETH balance is ${await dx.balances(weth.address, buyer1)}`)
+
+        await dx.postBuyOrder(
+            knc.address,
+            weth.address,
+            auctionIndex,
+            remainingBuyVolume,
+            {from: buyer1}
+        )
+        dbg(`\n--- buyer bought everything`)
+        await dbgVolumesAndPrices(knc, weth, auctionIndex)
+        dbg(`buyer DX WETH balance is ${await dx.balances(weth.address, buyer1)}`)
+        const currentAuctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+        dbg(`is auction still open? ${currentAuctionIndex == auctionIndex}`)
+
+        await dx.claimBuyerFunds(
+            knc.address,
+            weth.address,
+            buyer1,
+            auctionIndex,
+            {from: buyer1}
+        )
+        dbg(`\n--- buyer claimed the KNC`)
+        const kncBalance = await dx.balances(knc.address, buyer1)
+        dbg(`buyer DX KNC balance is ${kncBalance}`)
+        dbg(`buyer DX WETH balance is ${await dx.balances(weth.address, buyer1)}`)
+
+        await dx.withdraw(knc.address, kncBalance, {from: buyer1})
+        dbg(`\n--- buyer withdrew all of the KNC`)
+        dbg(`buyer KNC balance is ${await knc.balanceOf(buyer1)}`)
+        dbg(`buyer DX KNC balance is ${await dx.balances(knc.address, buyer1)}`)
+        dbg(`buyer DX WETH balance is ${await dx.balances(weth.address, buyer1)}`)
+
+        dbg(`\n--- seller wants his money back as well`)
+        dbg(`before:`)
+        dbg(`seller WETH balance is ${await weth.balanceOf(seller1)}`)
+        dbg(`seller DX WETH balance is ${await dx.balances(weth.address, seller1)}`)
+
+        await dx.claimSellerFunds(
+            knc.address,
+            weth.address,
+            seller1,
+            auctionIndex,
+            {from: seller1}
+        )
+        const wethBalance = await dx.balances(weth.address, seller1)
+        dbg(`after claiming:`)
+        dbg(`seller WETH balance is ${await weth.balanceOf(seller1)}`)
+        dbg(`seller DX WETH balance is ${wethBalance}`)
+
+        await dx.withdraw(weth.address, wethBalance, {from: seller1})
+        dbg(`after withdrawing:`)
+        dbg(`seller WETH balance is ${await weth.balanceOf(seller1)}`)
+        dbg(`seller DX WETH balance is ${await dx.balances(weth.address, seller1)}`)
 
         assert(false)
     })
