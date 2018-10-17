@@ -61,4 +61,23 @@ contract DxMarketMaker is Withdrawable {
 
         return true;
     }
+
+    // TODO: should this be allowed for non-admin users?
+    function depositToDx(address tokenAddress, uint amount)
+        public
+        onlyAdmin
+        returns (uint)
+    {
+        ERC20(tokenAddress).approve(dx, amount);
+        return dx.deposit(tokenAddress, amount);
+    }
+
+    // TODO: should this be allowed for non-admin users?
+    function withdrawFromDx(address tokenAddress, uint amount)
+        public
+        onlyAdmin
+        returns (uint)
+    {
+        return dx.withdraw(tokenAddress, amount);
+    }
 }

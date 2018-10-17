@@ -26,11 +26,11 @@ contract('DxMarketMaker', async (accounts) => {
         )
     }
 
-    async function getTokenListingFundingInWei() {
-        // TODO: threshold is in USD / 1e18, convert to ETH using their Oracle.
-        // return await dx.thresholdNewTokenPair()
-        return 1e20
-    }
+    // async function getTokenListingFundingInWei() {
+    //     // TODO: threshold is in USD / 1e18, convert to ETH using their Oracle.
+    //     // return await dx.thresholdNewTokenPair()
+    //     return 1e20
+    // }
 
     const dbgVolumesAndPrices = async (st, bt, auctionIndex) => {
         const stSymbol = await st.symbol()
@@ -93,10 +93,10 @@ contract('DxMarketMaker', async (accounts) => {
 
         dbg(`\n--- lister wants to buy it all`)
         dbg(`fee is ${await dx.getFeeRatio(lister)}`)
-        const calculateAmountWithFee = async (amount) => {
-            const [num, den] = await dx.getFeeRatio(lister)
-            return amount / (1 - num / den)
-        }
+        // const calculateAmountWithFee = async (amount) => {
+        //     const [num, den] = await dx.getFeeRatio(lister)
+        //     return amount / (1 - num / den)
+        // }
         dbg(`remaining sell volume in ${kncSymbol} is ${remainingBuyVolume}`)
         // TODO: no fees if closing the auction??
         // const buyAmount = await calculateAmountWithFee(remainingBuyVolume)
@@ -131,7 +131,7 @@ contract('DxMarketMaker', async (accounts) => {
         dbg(`   lister KNC balance is ${await dx.balances(knc.address, lister)}`)
 
         dbg(`XXX`)
-        const [fundsRetuned, frtsIssued] = await dx.claimSellerFunds.call(
+        const [fundsRetuned, ] = await dx.claimSellerFunds.call(
             weth.address,
             knc.address,
             lister,
@@ -209,6 +209,8 @@ contract('DxMarketMaker', async (accounts) => {
         admin = accounts[0]
         seller1 = accounts[1]
         buyer1 = accounts[2]
+        user = accounts[3]
+
         weth = await EtherToken.deployed()
         dxmm = await DxMarketMaker.deployed()
         dx = DutchExchange.at(await dxmm.dx())
@@ -398,7 +400,7 @@ contract('DxMarketMaker', async (accounts) => {
         }
     })
 
-    it("should allow withdrawing from dxmm", async () => {
+    it("should allow admin to withdraw from dxmm", async () => {
         await weth.deposit({value: 1e10, from: admin})
         const initialWethBalance = await weth.balanceOf(admin)
 
@@ -407,6 +409,75 @@ contract('DxMarketMaker', async (accounts) => {
 
         const wethBalance = await weth.balanceOf(admin)
         wethBalance.should.be.bignumber.equal(initialWethBalance)
+    })
+
+    it("reject withdrawing from dxmm by non-admin users", async () => {
+        await weth.deposit({value: 1e10, from: admin})
+        await weth.transfer(dxmm.address, 1e10, {from: admin})
+
+        try {
+            await dxmm.withdrawToken(weth.address, 1e10, user, {from: user})
+        } catch(e){
+            assert(
+                Helper.isRevertErrorMessage(e),
+                "expected revert but got: " + e)
+        }
+    })
+
+    it("should allow depositing to DX by admin", async () => {
+        await weth.deposit({value: 1e10, from: admin})
+        await weth.transfer(dxmm.address, 1e10, {from: admin})
+        const balanceBefore = await dx.balances(weth.address, dxmm.address)
+
+        const updatedBalance = await dxmm.depositToDx.call(weth.address, 1e10, {from: admin})
+        await dxmm.depositToDx(weth.address, 1e10, {from: admin})
+
+        const balanceAfter = await dx.balances(weth.address, dxmm.address)
+        updatedBalance.should.be.bignumber.equal(balanceAfter)
+        balanceAfter.should.be.bignumber.equal(balanceBefore + 1e10)
+    })
+
+    it("reject depositing to DX by non-admins", async () => {
+        await weth.deposit({value: 1e10, from: user})
+        await weth.transfer(dxmm.address, 1e10, {from: user})
+
+        try {
+            await dxmm.depositToDx(weth.address, 1e10, {from: user})
+        } catch(e){
+            assert(
+                Helper.isRevertErrorMessage(e),
+                "expected revert but got: " + e)
+        }
+    })
+
+    it("should allow withdrawing from DX by admin", async () => {
+        await weth.deposit({value: 1e10, from: admin})
+        await weth.transfer(dxmm.address, 1e10, {from: admin})
+        const dxBalanceBefore = await dx.balances(weth.address, dxmm.address)
+        const wethBalanceBefore = await weth.balanceOf(admin)
+
+        await dxmm.depositToDx(weth.address, 1e10, {from: admin})
+        await dxmm.withdrawFromDx(weth.address, 1e10, {from: admin})
+
+        const dxBalanceAfter = await dx.balances(weth.address, dxmm.address)
+        const wethBalanceAfter = await weth.balanceOf(admin)
+
+        dxBalanceAfter.should.be.bignumber.equal(dxBalanceBefore)
+        wethBalanceAfter.should.be.bignumber.equal(wethBalanceBefore)
+    })
+
+    it("reject withdrawing from DX by non-admins", async () => {
+        await weth.deposit({value: 1e10, from: admin})
+        await weth.transfer(dxmm.address, 1e10, {from: admin})
+        await dxmm.depositToDx(weth.address, 1e10, {from: admin})
+
+        try {
+            await dxmm.withdrawFromDx(weth.address, 1e10, {from: user})
+        } catch(e){
+            assert(
+                Helper.isRevertErrorMessage(e),
+                "expected revert but got: " + e)
+        }
     })
 
     it("should clear the auction when we buy everything")
