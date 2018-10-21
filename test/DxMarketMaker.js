@@ -32,6 +32,9 @@ contract('DxMarketMaker', async (accounts) => {
     //     return 1e20
     // }
 
+    // TODO: use oracle, last price, etc.
+    const enoughKncToStartAuction = () => 1e22
+
     const dbgVolumesAndPrices = async (st, bt, auctionIndex) => {
         const stSymbol = await st.symbol()
         const btSymbol = await bt.symbol()
@@ -43,8 +46,8 @@ contract('DxMarketMaker', async (accounts) => {
             bt.address,
             auctionIndex
         )
-        const remainingSellVolume = sellVolume - buyVolume * num / den
-        const remainingBuyVolume = sellVolume * num / den - buyVolume
+        const remainingSellVolume = sellVolume - buyVolume.mul(num).div(den)
+        const remainingBuyVolume = sellVolume.mul(num).div(den) - buyVolume
         dbg(`...... sellVolumesCurrent: ${sellVolume} ${stSymbol}`)
         dbg(`...... buyVolumes: ${buyVolume} ${btSymbol}`)
         dbg(`...... price ${stSymbol}/${btSymbol} is ${num}/${den}`)
@@ -84,7 +87,7 @@ contract('DxMarketMaker', async (accounts) => {
         dbg(`\n--- lister added ${kncSymbol} to DX`)
 
         await waitTimeInSeconds(6 * 60 * 60)
-        const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+        const auctionIndex = await dx.getAuctionIndex(weth.address, knc.address)
         dbg(`\n--- waited 6 hours for auction ${auctionIndex} to start`)
 
         dbg(`\n--- available for auction:`)
@@ -97,7 +100,7 @@ contract('DxMarketMaker', async (accounts) => {
         //     const [num, den] = await dx.getFeeRatio(lister)
         //     return amount / (1 - num / den)
         // }
-        dbg(`remaining sell volume in ${kncSymbol} is ${remainingBuyVolume}`)
+        dbg(`remaining buy volume in ${kncSymbol} is ${remainingBuyVolume}`)
         // TODO: no fees if closing the auction??
         // const buyAmount = await calculateAmountWithFee(remainingBuyVolume)
         const buyAmount = remainingBuyVolume
@@ -118,19 +121,23 @@ contract('DxMarketMaker', async (accounts) => {
             buyAmount,
             {from: lister}
         )
-        dbg(`\n--- lister bought ${buyAmount} ${kncSymbol}`)
+        dbg(`\n--- lister bought using ${buyAmount} ${kncSymbol}`)
         dbg(`\n--- remaining:`)
         await dbgVolumesAndPrices(weth, knc, auctionIndex)
         await dbgVolumesAndPrices(knc, weth, auctionIndex)
 
-        const currentAuctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
-        dbg(`\n--- is auction still open? ${currentAuctionIndex == auctionIndex}`)
+        const currentAuctionIndex = await dx.getAuctionIndex(weth.address, knc.address)
+        dbg(`\n--- is auction still open? ${currentAuctionIndex.equals(auctionIndex)}`)
 
         dbg(`+++ current lister balance:`)
         dbg(`   lister WETH balance is ${await dx.balances(weth.address, lister)}`)
         dbg(`   lister KNC balance is ${await dx.balances(knc.address, lister)}`)
 
-        dbg(`XXX`)
+        dbg(`XXX (4)`)
+        dbg(`X1 current auctionIndex(knc, weth) is ${await dx.getAuctionIndex(weth.address, knc.address)}`)
+        dbg(`X2 my auctionIndex is ${auctionIndex}`)
+        dbg(`X3 sellerBalance is ${await dx.sellerBalances(weth.address, knc.address, auctionIndex, lister)}`)
+        dbg(`X4 closingPrice is ${await dx.closingPrices(weth.address, knc.address, auctionIndex)}`)
         const [fundsRetuned, ] = await dx.claimSellerFunds.call(
             weth.address,
             knc.address,
@@ -231,9 +238,7 @@ contract('DxMarketMaker', async (accounts) => {
         const knc = await deployTokenAddToDxAndClearFirstAuction()
         const kncSymbol = await knc.symbol()
 
-        // TODO: use oracle, last price, etc.
-        const enoughKncToStartAuction = 1e22
-        const kncSellAmount = enoughKncToStartAuction
+        const kncSellAmount = enoughKncToStartAuction()
         await knc.transfer(seller1, kncSellAmount, {from: admin})
         dbg(`\n--- seller now has ${await knc.balanceOf(seller1)} ${kncSymbol}`)
 
@@ -310,7 +315,7 @@ contract('DxMarketMaker', async (accounts) => {
         await dbgVolumesAndPrices(knc, weth, auctionIndex)
         dbg(`buyer DX WETH balance is ${await dx.balances(weth.address, buyer1)}`)
         const currentAuctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
-        dbg(`is auction still open? ${currentAuctionIndex == auctionIndex}`)
+        dbg(`is auction still open? ${currentAuctionIndex.equals(auctionIndex)}`)
 
         await dx.claimBuyerFunds(
             knc.address,
