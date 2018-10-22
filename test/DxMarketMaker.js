@@ -7,6 +7,7 @@ require("chai")
     .should()
 
 const DutchExchange = artifacts.require("DutchExchange")
+const PriceOracleInterface = artifacts.require("PriceOracleInterface")
 const DxMarketMaker = artifacts.require("DxMarketMaker")
 const TestToken = artifacts.require("TestToken")
 const EtherToken = artifacts.require("EtherToken")
@@ -217,14 +218,16 @@ contract('DxMarketMaker', async (accounts) => {
         seller1 = accounts[1]
         buyer1 = accounts[2]
         user = accounts[3]
+        operator = accounts[4]
 
         weth = await EtherToken.deployed()
         dxmm = await DxMarketMaker.deployed()
         dx = DutchExchange.at(await dxmm.dx())
-    })
+        dxPriceOracle = PriceOracleInterface.at(await dx.ethUSDOracle())
 
-    it("should have deployed the contract", async () => {
-        dxmm.should.exist
+        await dxmm.addOperator(operator, {from: admin})
+
+        token = await deployTokenAddToDxAndClearFirstAuction()
     })
 
     it("admin should deploy token, add to dx, and conclude the first auction", async () => {
@@ -234,7 +237,7 @@ contract('DxMarketMaker', async (accounts) => {
         nextAuctionIndex.should.be.bignumber.equal(2)
     })
 
-    it.skip("seller can sell KNC and buyer can buy it", async () => {
+    it("seller can sell KNC and buyer can buy it", async () => {
         const knc = await deployTokenAddToDxAndClearFirstAuction()
         const kncSymbol = await knc.symbol()
 
@@ -458,16 +461,16 @@ contract('DxMarketMaker', async (accounts) => {
     it("should allow withdrawing from DX by admin", async () => {
         await weth.deposit({value: 1e10, from: admin})
         await weth.transfer(dxmm.address, 1e10, {from: admin})
+        const wethBalanceBefore = await weth.balanceOf(dxmm.address)
         const dxBalanceBefore = await dx.balances(weth.address, dxmm.address)
-        const wethBalanceBefore = await weth.balanceOf(admin)
 
         await dxmm.depositToDx(weth.address, 1e10, {from: admin})
         await dxmm.withdrawFromDx(weth.address, 1e10, {from: admin})
 
         const dxBalanceAfter = await dx.balances(weth.address, dxmm.address)
-        const wethBalanceAfter = await weth.balanceOf(admin)
-
         dxBalanceAfter.should.be.bignumber.equal(dxBalanceBefore)
+
+        const wethBalanceAfter = await weth.balanceOf(dxmm.address)
         wethBalanceAfter.should.be.bignumber.equal(wethBalanceBefore)
     })
 
@@ -485,23 +488,109 @@ contract('DxMarketMaker', async (accounts) => {
         }
     })
 
+    xit("should allow checking if balance is above new auction threshold", async () => {
+        const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+        // TODO: correct calculations
+        const dxKncNextAuctionThreshold = 1e60
+        const currentDxBalance = 1
+
+        const aboveThreshold = await dxmm.isBalanceAboveNewAuctionThreshold()
+        aboveThreshold.should.be.false()
+
+        // TODO: Two tests!
+        // Increase balances
+        // const aboveThreshold = await dxmm.isBalanceAboveNewAuctionThreshold()
+        // aboveThreshold.should.be.true()
+    })
+
+    it("should provide auction threshold in token", async () => {
+        const dxmmThresholdNewAuction = await dxmm.thresholdNewAuction.call(token.address)
+        await dxmm.thresholdNewAuction(token.address)
+
+        const thresholdNewAuctionUSD = await dx.thresholdNewAuction()
+        const usdEthPrice = await dxPriceOracle.getUSDETHPrice.call()
+        const [lastPriceNum, lastPriceDen] = await dx.getPriceOfTokenInLastAuction(token.address)
+        const thresholdNewAuctionToken = Number.parseInt(
+            thresholdNewAuctionUSD.div(usdEthPrice.mul(lastPriceNum).div(lastPriceDen))
+        )
+        dbg(`new auction threashold is ${thresholdNewAuctionUSD} USD`)
+        dbg(`oracle USDETH price is ${await usdEthPrice}`)
+        dbg(`last auction price was ${lastPriceNum}/${lastPriceDen} (${lastPriceNum.div(lastPriceDen)})`)
+        const tokenUsdPrice = usdEthPrice.mul(lastPriceNum).div(lastPriceDen)
+        dbg(`Token price in USD is ${tokenUsdPrice}`)
+        dbg(`new auction threashold is ${thresholdNewAuctionToken} TOKEN`)
+
+        assert.equal(dxmmThresholdNewAuction, thresholdNewAuctionToken)
+    })
+
+    xit("should allow getting amount of KNC to start next auction", async () => {
+        const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+        // TODO: make sure no auction is running or waiting
+        const kncToStartAuction = await dxmm.tokenAmountToStartAuction(knc.address)
+
+        const auctionThreshold = await dx.thresholdNewAuction()
+        const [num, den] = await dx.getPriceOfTokenInLastAuction(knc.address)
+        dbg(`new auction threashold is ${auctionThreshold} USD`)
+        dbg(`last closing price was ${num}/${den}`)
+
+        dbg(`new auction threshold is ${auctionThreshold} USD -> ${auctionThreholdKnc}`)
+
+        kncToStartAuction.should.be.bignumber.equal(auctionThreholdKnc)
+    })
+
+    it("should allow getting amount of KNC to start next auction, after some other user already posted sell order")
+
+
+    // ---------------
+
     it("should clear the auction when we buy everything")
     it("should be able to add token, wait for initial sell to end, then start new sale")
     it("should be able to check if should buy back (using kyber price)")
     it("should be able to withdraw all the money from dxmm")
     it("should be able to withdraw all of the money from dx")
     it("should start sale only if has enough ETH to end")
+
+    const flow = `
+        // claim unclaimed KNC and WETH
+        if currentAuctionIndex > lastClaimedAuctionIndex:
+            auctionIndices = [lastClaimedAuctionIndex + 1 to currentAuctionIndex(excluding)]
+            claimTokensFromSeveralAuctionsAsSeller(knc, weth, auctionIndices)
+            claimTokensFromSeveralAuctionsAsBuyer(knc, weth, auctionIndices)
+
+        switch(KncAuctionState()):
+            case WAITING_FOR_AUCTION_TIMEOUT:
+                return  // nothing to do but wait now
+
+            case NO_AUCTION_RUNNING_OR_WAITING:
+                missingKncToStartAuction = calculateMissingTokenForAuctionStart(knc)
+                if missingKncToStartAuction > 0:
+                    if dxmm.balanace(KNC) < missingKncToStartAuction:
+                        // TODO: buy required KNC, start the auction and then notify
+                        FINISH WITH ERROR - desposit KNC
+                    deposit(missingKncToStartAuction)
+
+                // trigger Auction
+                postSellOrder(KNC, WETH, minimumAuctionAmount)
+
+            case AUCTION_RUNNING:
+                if isKncCheaperThanOnKyber():
+                    buy the KNC that we are selling in the auction
+    `
 })
 
+// TODO: Extract to util class
 async function waitTimeInSeconds(seconds) {
      await Helper.sendPromise('evm_increaseTime', [seconds])
      await Helper.sendPromise('evm_mine', [])
 }
 
-async function dbg(...args) {
-    if (DEBUG) console.log(...args)
-}
-
+// TODO: Extract to util class
 function blockChainTime() {
     return web3.eth.getBlock(web3.eth.blockNumber).timestamp
+}
+
+async function dbg(...args) {
+    if (DEBUG) console.log(...args)
 }
