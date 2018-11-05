@@ -80,11 +80,11 @@ contract DxMarketMaker is Withdrawable {
         return dx.withdraw(token, amount);
     }
 
-    function thresholdNewAuction(address token)
+    function thresholdNewAuctionToken(address token)
         public
         // TODO: can this be a view function? It uses oracle's non-view function...
         // view
-        returns (uint)
+        returns (uint, uint)
     {
         uint priceTokenNum;
         uint priceTokenDen;
@@ -92,7 +92,7 @@ contract DxMarketMaker is Withdrawable {
 
         PriceOracleInterface priceOracle = PriceOracleInterface(dx.ethUSDOracle());
 
-        return div(
+        return (
             mul(
                 dx.thresholdNewAuction(),
                 priceTokenDen
