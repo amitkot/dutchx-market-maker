@@ -343,28 +343,12 @@ contract("DxMarketMaker", async accounts => {
       weth,
       auctionIndex
     )
-    console.log("remainingBuyVolume:", remainingBuyVolume)
     console.log("remainingBuyVolume:", remainingBuyVolume.toString())
     shouldBuyVolume = new BigNumber(remainingBuyVolume.toString()).add(1)
-    // let shouldBuyVolume = new BigNumber(remainingBuyVolume.toString())
-    // console.log("shouldBuyVolume before:", shouldBuyVolume.toNumber())
-    // let xxx = shouldBuyVolume.add(1)
-    // let yyy = shouldBuyVolume + 1
-    // let zzz = new BigNumber(shouldBuyVolume.add(1).toString())
     console.log("shouldBuyVolume:", shouldBuyVolume.toString())
-    console.log("shouldBuyVolume:", shouldBuyVolume.toNumber(10))
-    console.log("shouldBuyVolume:", shouldBuyVolume.valueOf(10))
-    // console.log("xxx:", xxx.toNumber())
-    // console.log("yyy:", yyy)
-    // console.log("zzz:", zzz)
-    // console.log("zzz:", zzz.toNumber())
 
-    dbg(1)
-    // await weth.deposit({ value: shouldBuyVolume.valueOf(10), from: buyer1 })
     await weth.deposit({ value: shouldBuyVolume, from: buyer1 })
-    dbg(2)
     await weth.approve(dx.address, shouldBuyVolume, { from: buyer1 })
-    dbg(3)
     await dx.deposit(weth.address, shouldBuyVolume, { from: buyer1 })
     dbg(`buyer converted to WETH and deposited to DX`)
     dbg(`buyer DX WETH balance is ${await dx.balances(weth.address, buyer1)}`)
@@ -552,22 +536,18 @@ contract("DxMarketMaker", async accounts => {
   })
 
   it("should provide auction threshold in token", async () => {
-    const [thresholdNum, thresholdDen] = await dxmm.thresholdNewAuctionToken.call(
-      token.address
-    )
-
-    const thresholdNewAuctionUSD = await dx.thresholdNewAuction()
+    const thresholdNewAuctionUSD = await dx.thresholdNewAuction.call()
     const usdEthPrice = await dxPriceOracle.getUSDETHPrice.call()
-    const [lastPriceNum, lastPriceDen] = await dx.getPriceOfTokenInLastAuction(
+    const [lastPriceNum, lastPriceDen] = await dx.getPriceOfTokenInLastAuction.call(
       token.address
     )
     const thresholdNewAuctionToken = (
-      new BigNumber(thresholdNewAuctionUSD)
-      .div(
-          new BigNumber(usdEthPrice)
-          .mul(lastPriceNum)
-          .div(lastPriceDen)
-      )
+        new BigNumber(thresholdNewAuctionUSD)
+        .div(
+            new BigNumber(usdEthPrice)
+            .mul(lastPriceNum)
+            .div(lastPriceDen)
+        )
     )
     dbg(`new auction threashold is ${thresholdNewAuctionUSD} USD`)
     dbg(`oracle USDETH price is ${await usdEthPrice}`)
@@ -583,7 +563,17 @@ contract("DxMarketMaker", async accounts => {
     dbg(`Token price in USD is ${tokenUsdPrice}`)
     dbg(`new auction threashold is ${thresholdNewAuctionToken} TOKEN`)
 
-    new BigNumber(thresholdNum).div(thresholdDen).should.be.bignumber.equal(thresholdNewAuctionToken)
+    const [thresholdNum, thresholdDen] = await dxmm.thresholdNewAuctionToken.call(
+      token.address
+    )
+
+    const dxNum = new BigNumber(thresholdNewAuctionUSD.toString()).mul(new BigNumber(lastPriceDen.toString()))
+    const dxDen = new BigNumber(usdEthPrice.toString()).mul(new BigNumber(lastPriceNum.toString()))
+
+    const dxmmNum = new BigNumber(thresholdNum.toString())
+    const dxmmDen = new BigNumber(thresholdDen.toString())
+
+    dxNum.mul(dxmmDen).should.be.bignumber.equal(dxmmNum.mul(dxDen))
   })
 
   xit("should allow getting amount of KNC to start next auction", async () => {
