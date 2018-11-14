@@ -3,7 +3,6 @@ pragma solidity ^0.4.23;
 import "./ERC20Interface.sol";
 import "./Withdrawable.sol";
 import "@gnosis.pm/dx-contracts/contracts/DutchExchange.sol";
-import "@gnosis.pm/dx-contracts/contracts/Oracle/PriceOracleInterface.sol";
 import "@gnosis.pm/util-contracts/contracts/EtherToken.sol";
 
 
@@ -14,6 +13,9 @@ interface KyberNetworkProxy {
         returns (uint expectedRate, uint slippageRate);
 }
 
+interface DxPriceOracleInterface {
+    function getUSDETHPrice() public view returns (uint256);
+}
 
 contract DxMarketMaker is Withdrawable {
     // This is the representation of ETH as an ERC20 Token for Kyber Network.
@@ -80,7 +82,6 @@ contract DxMarketMaker is Withdrawable {
         return dx.withdraw(token, amount);
     }
 
-    // Function is not view as it uses PriceOracleInterface's non-view function.
     function thresholdNewAuctionToken(address token)
         public
         returns (uint, uint)
@@ -89,7 +90,7 @@ contract DxMarketMaker is Withdrawable {
         uint priceTokenDen;
         (priceTokenNum, priceTokenDen) = dx.getPriceOfTokenInLastAuction(token);
 
-        PriceOracleInterface priceOracle = PriceOracleInterface(dx.ethUSDOracle());
+        DxPriceOracleInterface priceOracle = DxPriceOracleInterface(dx.ethUSDOracle());
 
         // TODO: watch for overflows!
         return (
