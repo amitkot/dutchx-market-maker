@@ -17,15 +17,29 @@ interface DxPriceOracleInterface {
     function getUSDETHPrice() public view returns (uint256);
 }
 
+// TODO: add support to token -> token
 contract DxMarketMaker is Withdrawable {
     // This is the representation of ETH as an ERC20 Token for Kyber Network.
     ERC20 constant internal ETH_TOKEN_ADDRESS = ERC20(
         0x00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
     );
 
+    // Declared in DutchExchange contract but not public.
+    uint internal constant DX_AUCTION_START_WAITING_FOR_FUNDING = 1;
+
     DutchExchange public dx;
     EtherToken public weth;
     KyberNetworkProxy public kyberNetworkProxy;
+
+    enum AuctionState {
+        NO_AUCTION_TRIGGERED,
+        AUCTION_TRIGGERED_WAITING,
+        AUCTION_IN_PROGRESS
+    }
+
+    AuctionState constant public NO_AUCTION_TRIGGERED = AuctionState.NO_AUCTION_TRIGGERED;
+    AuctionState constant public AUCTION_TRIGGERED_WAITING = AuctionState.AUCTION_TRIGGERED_WAITING;
+    AuctionState constant public AUCTION_IN_PROGRESS = AuctionState.AUCTION_IN_PROGRESS;
 
     constructor(address _dx, address _weth, address _kyberNetworkProxy) public {
         require(address(_dx) != address(0));
@@ -84,7 +98,8 @@ contract DxMarketMaker is Withdrawable {
 
     function thresholdNewAuctionToken(address token)
         public
-        returns (uint, uint)
+        view
+        returns (uint num)
     {
         uint priceTokenNum;
         uint priceTokenDen;
@@ -92,8 +107,9 @@ contract DxMarketMaker is Withdrawable {
 
         DxPriceOracleInterface priceOracle = DxPriceOracleInterface(dx.ethUSDOracle());
 
-        // TODO: watch for overflows!
-        return (
+        // Rounding up to make sure we pass the threshold
+        return 1 + div(
+            // mul() takes care of overflows
             mul(
                 dx.thresholdNewAuction(),
                 priceTokenDen
@@ -103,6 +119,47 @@ contract DxMarketMaker is Withdrawable {
                 priceTokenNum
             )
         );
+    }
+
+    function calculateMissingTokenForAuctionStart(address token)
+        public
+        view
+        returns (uint)
+    {
+        uint currentAuctionSellVolume = dx.sellVolumesCurrent(token, weth);
+        uint thresholdTokenWei = thresholdNewAuctionToken(token);
+        
+        if (thresholdTokenWei > currentAuctionSellVolume) {
+            return thresholdTokenWei - currentAuctionSellVolume;
+        }
+
+        return 0;
+    }
+
+    function addFee(uint amount) public view returns (uint) {
+        uint num;
+        uint den;
+        (num, den) = dx.getFeeRatio(msg.sender);
+
+        // amount / (1 - num / den)
+        return div(
+            mul(amount, den),
+            (den - num)
+        );
+    }
+
+    function getAuctionState(address token) public view returns (AuctionState) {
+        uint auctionStart = dx.getAuctionStart(token, weth);
+        if (auctionStart != DX_AUCTION_START_WAITING_FOR_FUNDING) {
+            // DutchExchange logic uses auction start time.
+            /* solhint-disable not-rely-on-time */
+            if (auctionStart > now) {
+                return AuctionState.AUCTION_TRIGGERED_WAITING;
+            } else {
+                return AuctionState.AUCTION_IN_PROGRESS;
+            }
+        }
+        return AuctionState.NO_AUCTION_TRIGGERED;
     }
 
     // --- Safe Math functions ---
