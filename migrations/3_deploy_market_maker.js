@@ -15,7 +15,7 @@ module.exports = async function(deployer, network, accounts) {
             const mockKyberNetworkProxy = await deployer.deploy(
                 MockKyberNetworkProxy,
                 // TODO: use actual KyberNetworkProxy value!
-                500
+                1555000000000000
             )
             console.log(
                 'Deployed MockKyberNetworkProxy to address %s',

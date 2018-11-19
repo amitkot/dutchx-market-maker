@@ -17,6 +17,7 @@ interface DxPriceOracleInterface {
     function getUSDETHPrice() public view returns (uint256);
 }
 
+
 // TODO: add support to token -> token
 contract DxMarketMaker is Withdrawable {
     // This is the representation of ETH as an ERC20 Token for Kyber Network.
@@ -96,6 +97,7 @@ contract DxMarketMaker is Withdrawable {
         return dx.withdraw(token, amount);
     }
 
+    // TODO: consider adding a "safety margin" to compensate for accuracy issues.
     function thresholdNewAuctionToken(address token)
         public
         view
@@ -105,7 +107,9 @@ contract DxMarketMaker is Withdrawable {
         uint priceTokenDen;
         (priceTokenNum, priceTokenDen) = dx.getPriceOfTokenInLastAuction(token);
 
-        DxPriceOracleInterface priceOracle = DxPriceOracleInterface(dx.ethUSDOracle());
+        DxPriceOracleInterface priceOracle = DxPriceOracleInterface(
+            dx.ethUSDOracle()
+        );
 
         // Rounding up to make sure we pass the threshold
         return 1 + div(
@@ -128,7 +132,7 @@ contract DxMarketMaker is Withdrawable {
     {
         uint currentAuctionSellVolume = dx.sellVolumesCurrent(token, weth);
         uint thresholdTokenWei = thresholdNewAuctionToken(token);
-        
+
         if (thresholdTokenWei > currentAuctionSellVolume) {
             return thresholdTokenWei - currentAuctionSellVolume;
         }
@@ -162,14 +166,31 @@ contract DxMarketMaker is Withdrawable {
         return AuctionState.NO_AUCTION_TRIGGERED;
     }
 
+    // TODO: support token -> token
+    function getKyberRate(address _token, uint amount)
+        public
+        view
+        returns (uint num, uint den)
+    {
+        ERC20 token = ERC20(_token);
+        uint rate;
+        (rate, ) = kyberNetworkProxy.getExpectedRate(
+            token,
+            ETH_TOKEN_ADDRESS,
+            amount
+        );
+
+        return (rate, 10 ** token.decimals());
+    }
+
     // --- Safe Math functions ---
     // ---------------------------
     /**
     * @dev Multiplies two numbers, reverts on overflow.
     */
     function mul(uint256 a, uint256 b) internal pure returns (uint256) {
-        // Gas optimization: this is cheaper than requiring 'a' not being zero, but the
-        // benefit is lost if 'b' is also tested.
+        // Gas optimization: this is cheaper than requiring 'a' not being zero,
+        // but the benefit is lost if 'b' is also tested.
         // See: https://github.com/OpenZeppelin/openzeppelin-solidity/pull/522
         if (a == 0) {
             return 0;
@@ -182,10 +203,12 @@ contract DxMarketMaker is Withdrawable {
     }
 
     /**
-    * @dev Integer division of two numbers truncating the quotient, reverts on division by zero.
+    * @dev Integer division of two numbers truncating the quotient, reverts on
+        division by zero.
     */
     function div(uint256 a, uint256 b) internal pure returns (uint256) {
-        require(b > 0); // Solidity only automatically asserts when dividing by 0
+        // Solidity only automatically asserts when dividing by 0
+        require(b > 0);
         uint256 c = a / b;
         // assert(a == b * c + a % b); // There is no case in which this doesn't hold
 

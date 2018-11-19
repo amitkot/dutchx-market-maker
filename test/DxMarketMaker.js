@@ -1,4 +1,3 @@
-// const BigNumber = web3.BigNumber
 const BigNumber = require('bignumber.js');
 const Helper = require("./helper.js")
 
@@ -12,6 +11,7 @@ const PriceOracleInterface = artifacts.require("PriceOracleInterface")
 const DxMarketMaker = artifacts.require("DxMarketMaker")
 const TestToken = artifacts.require("TestToken")
 const EtherToken = artifacts.require("EtherToken")
+const MockKyberNetworkProxy = artifacts.require("MockKyberNetworkProxy")
 
 tokenDeployedIndex = 0
 
@@ -87,13 +87,19 @@ contract("DxMarketMaker", async accounts => {
         await dx.deposit(weth.address, initialWethWei, { from: lister })
         dbg(`\n--- lister deposited ${initialWethWei} WETH in DX`)
 
+        const [initialRateNum, initialRateDen] = await dxmm.getKyberRate(knc.address, 0)
+        dbg(`initial rate is knc => weth is ${initialRateNum} / ${initialRateDen} (=${initialRateNum/initialRateDen})`)
+
+        // Using 0 amount as mock kyber contract returns fixed rate anyway.
         await dx.addTokenPair(
             weth.address,
             knc.address,
             initialWethWei,
             0,
-            100 /* tokenToEthNum */,
-            1 /* tokenToEthDen */,
+            // dividing by 2 to make numbers smaller, avoid reverts due to fear
+            // of overflow
+            initialRateDen / 2 /* tokenToEthNum */,
+            initialRateNum / 2 /* tokenToEthDen */,
             { from: lister }
         )
         dbg(`\n--- lister added ${kncSymbol} to DX`)
@@ -338,12 +344,8 @@ contract("DxMarketMaker", async accounts => {
         await waitForTriggeredAuctionToStart(knc, auctionIndex)
 
         // now check if buyer wants to buyAmount
-        const [lastNum, lastDen] = await dx.getPriceOfTokenInLastAuction(
-            knc.address
-        )
-        const targetPrice = lastNum / lastDen
         dbg(`\n--- buyer checks prices`)
-        dbg(`buyer wants to buy at price of ${targetPrice}`)
+        dbg(`buyer wants to buy and will wait for target price`)
 
         let num, den
         while (true) {
@@ -352,19 +354,24 @@ contract("DxMarketMaker", async accounts => {
                 weth.address,
                 auctionIndex
             )
-            if (num / den > targetPrice) {
-                dbg(
-                    `... at ${await blockChainTime()} price is ${num /
-                            den} -> waiting 10 minutes.`
-                )
-                await waitTimeInSeconds(10 * 60)
-            } else {
+
+            // TODO: use actual amount
+            const amount = 10000
+            const [kncNum, kncDen] = await dxmm.getKyberRate(knc.address, amount)
+            const targetRate = (kncNum / kncDen)
+            if (num / den <= targetRate) {
                 dbg(
                     `... at ${await blockChainTime()} price is ${num /
                             den} -> Done waiting!`
                 )
                 break
             }
+
+            dbg(
+                `... at ${await blockChainTime()} price is ${num /
+                        den} (target: ${targetRate})-> waiting 10 minutes.`
+            )
+            await waitTimeInSeconds(10 * 60)
         }
 
         // Buyer buys everything
@@ -553,25 +560,35 @@ contract("DxMarketMaker", async accounts => {
         const [lastPriceNum, lastPriceDen] = await dx.getPriceOfTokenInLastAuction.call(
             token.address
         )
+        // TODO: different order of calculation gives slightly different results:
+        // commented: 1.169208159697765936047e+21
+        // uncommented: 1.169208159697765936041e+21
+        // const thresholdNewAuctionToken = (
+        //     new BigNumber(thresholdNewAuctionUSD)
+        //     .div(
+        //         new BigNumber(usdEthPrice)
+        //         .mul(new BigNumber(lastPriceNum))
+        //         .div(new BigNumber(lastPriceDen))
+        //     )
+        //     .ceil()
+        // )
         const thresholdNewAuctionToken = (
             new BigNumber(thresholdNewAuctionUSD)
-            .div(
+                .mul(new BigNumber(lastPriceDen))
+                .div(
                 new BigNumber(usdEthPrice)
-                .mul(lastPriceNum)
-                .div(lastPriceDen)
+                .mul(new BigNumber(lastPriceNum))
             )
             .ceil()
         )
         dbg(`new auction threashold is ${thresholdNewAuctionUSD} USD`)
         dbg(`oracle USDETH price is ${await usdEthPrice}`)
-        dbg(
-            `last auction price was ${lastPriceNum}/${lastPriceDen} (${
-                lastPriceNum.div(lastPriceDen)})`
-        )
+        dbg(`last auction price was ${lastPriceNum}/${lastPriceDen}`)
+
         const tokenUsdPrice = (
             new BigNumber(usdEthPrice)
-            .mul(lastPriceNum)
-            .div(lastPriceDen)
+            .mul(new BigNumber(lastPriceNum))
+            .div(new BigNumber(lastPriceDen))
         )
         dbg(`Token price in USD is ${tokenUsdPrice}`)
         dbg(`new auction threashold is ${thresholdNewAuctionToken} TOKEN`)
@@ -733,6 +750,39 @@ contract("DxMarketMaker", async accounts => {
 
             amountWithFee.should.be.bignumber.equal(201)
         })
+    })
+
+    // TODO: implement!
+    it("how many funds in current auction?")
+
+    it("get kyber rates", async () => {
+        const knc = await deployTokenAddToDxAndClearFirstAuction()
+        const kyberProxy = await MockKyberNetworkProxy.at(
+            await dxmm.kyberNetworkProxy()
+        )
+
+        // TODO: use actual value
+        const kncAmountInAuction = 10000
+
+        const [kncRate, ] = await kyberProxy.getExpectedRate(
+            knc.address,
+            weth.address,
+            kncAmountInAuction
+        )
+
+        dbg(`direct kyber rate for knc => weth is ${kncRate}`)
+
+        const [kyberRateNum, kyberRateDen] = await dxmm.getKyberRate(
+            knc.address,
+            kncAmountInAuction /* amount */
+        )
+
+        dbg(`dxmm kyber rate is (${kyberRateNum}, ${kyberRateDen})`)
+
+        const dxmmValue = kyberRateNum.div(kyberRateDen)
+        // TODO: extract 10**18 as parameter to support multiple tokens
+        const kyberValue = kncRate.div(10**18)
+        dxmmValue.should.be.bignumber.equal(kyberValue)
     })
 
     // ---------------
