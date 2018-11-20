@@ -18,6 +18,7 @@ interface DxPriceOracleInterface {
 }
 
 
+// TODO: add fail texts to require calls
 // TODO: add support to token -> token
 contract DxMarketMaker is Withdrawable {
     // This is the representation of ETH as an ERC20 Token for Kyber Network.
@@ -181,6 +182,15 @@ contract DxMarketMaker is Withdrawable {
         );
 
         return (rate, 10 ** token.decimals());
+    }
+
+    function tokenAmountInCurrentAuction(address token)
+        public
+        view
+        returns (uint)
+    {
+        uint auctionIndex = dx.getAuctionIndex(token, weth);
+        return dx.sellerBalances(token, weth, auctionIndex, msg.sender);
     }
 
     // --- Safe Math functions ---
