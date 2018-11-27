@@ -18,6 +18,7 @@ interface DxPriceOracleInterface {
 }
 
 
+// TODO: add events for logging calculations and decisions
 // TODO: add fail texts to require calls
 // TODO: add support to token -> token
 contract DxMarketMaker is Withdrawable {
@@ -184,13 +185,53 @@ contract DxMarketMaker is Withdrawable {
         return (rate, 10 ** token.decimals());
     }
 
-    function tokenAmountInCurrentAuction(address token)
+    function sellTokenAmountInCurrentAuction(
+        address token,
+        uint auctionIndex,
+        address account
+    )
         public
         view
         returns (uint)
     {
-        uint auctionIndex = dx.getAuctionIndex(token, weth);
-        return dx.sellerBalances(token, weth, auctionIndex, msg.sender);
+        return dx.sellerBalances(token, weth, auctionIndex, account);
+    }
+
+    // The amount of tokens that matches the amount sold by provided account in
+    // specified auction index, deducting the amount that was already bought.
+    function calculateAuctionBuyTokens(
+        address sellToken,
+        uint auctionIndex,
+        address account
+    )
+        public
+        view
+        returns (uint)
+    {
+        // TODO: support token -> token
+        address buyToken = weth;
+        uint sellVolume = sellTokenAmountInCurrentAuction(
+            sellToken,
+            auctionIndex,
+            account
+        );
+        uint buyVolume = dx.buyVolumes(sellToken, buyToken);
+
+        uint num;
+        uint den;
+        (num, den) = dx.getCurrentAuctionPrice(
+            sellToken,
+            buyToken,
+            auctionIndex
+        );
+
+        // No price for this auction, it is a future one.
+        if (den == 0) return 0;
+
+        return mul(sellVolume, num) / den - buyVolume;
+    }
+
+    function claimAuctionTokens(address token, uint auctionIndex) public {
     }
 
     // --- Safe Math functions ---
