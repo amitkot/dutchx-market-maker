@@ -156,7 +156,7 @@ contract DxMarketMaker is Withdrawable {
 
     function getAuctionState(address token) public view returns (AuctionState) {
         uint auctionStart = dx.getAuctionStart(token, weth);
-        if (auctionStart != DX_AUCTION_START_WAITING_FOR_FUNDING) {
+        if (auctionStart > DX_AUCTION_START_WAITING_FOR_FUNDING) {
             // DutchExchange logic uses auction start time.
             /* solhint-disable not-rely-on-time */
             if (auctionStart > now) {
@@ -231,7 +231,62 @@ contract DxMarketMaker is Withdrawable {
         return mul(sellVolume, num) / den - buyVolume;
     }
 
-    function claimAuctionTokens(address token, uint auctionIndex) public {
+    function claimAuctionTokens(
+        address sellToken,
+        address buyToken,
+        uint auctionIndex
+    )
+        public
+    {
+        // TODO: Claim unclaimed KNC and WETH
+        // if (currentAuctionIndex > lastClaimedAuctionIndex) {
+        //     auctionIndices = [lastClaimedAuctionIndex + 1 to currentAuctionIndex(excluding)]
+        //     claimTokensFromSeveralAuctionsAsSeller(knc, weth, auctionIndices)
+        //     claimTokensFromSeveralAuctionsAsBuyer(knc, weth, auctionIndices)
+        // }
+    }
+
+    function willAmountClearAuction(
+        address sellToken,
+        address buyToken,
+        uint auctionIndex,
+        uint amount
+    )
+        public
+        view
+        returns (bool)
+    {
+        // TODO: add similar requires here and in other places?
+        // R1: auction must not have cleared
+        // require(closingPrices[sellToken][buyToken][auctionIndex].den == 0);
+
+        // uint auctionStart = getAuctionStart(sellToken, buyToken);
+
+        // R2
+        // require(auctionStart <= now);
+
+        // R4
+        // require(auctionIndex == getAuctionIndex(sellToken, buyToken));
+
+        // R5: auction must not be in waiting period
+        // require(auctionStart > AUCTION_START_WAITING_FOR_FUNDING);
+
+        uint buyVolume = dx.buyVolumes(sellToken, buyToken);
+
+        // R7
+        // require(add(buyVolume, amount) < 10 ** 30);
+
+        // Overbuy is when a part of a buy order clears an auction
+        // In that case we only process the part before the overbuy
+        // To calculate overbuy, we first get current price
+        uint sellVolume = dx.sellVolumesCurrent(sellToken, buyToken);
+
+        uint num;
+        uint den;
+        (num, den) = dx.getCurrentAuctionPrice(sellToken, buyToken, auctionIndex);
+        // 10^30 * 10^37 = 10^67
+        uint outstandingVolume = atleastZero(int(mul(sellVolume, num) / den - buyVolume));
+        return amount >= outstandingVolume;
     }
 
     // --- Safe Math functions ---
@@ -264,5 +319,17 @@ contract DxMarketMaker is Withdrawable {
         // assert(a == b * c + a % b); // There is no case in which this doesn't hold
 
         return c;
+    }
+
+    function atleastZero(int a)
+        public
+        pure
+        returns (uint)
+    {
+        if (a < 0) {
+            return 0;
+        } else {
+            return uint(a);
+        }
     }
 }
