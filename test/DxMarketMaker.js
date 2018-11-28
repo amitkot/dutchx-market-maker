@@ -1262,8 +1262,7 @@ contract("DxMarketMaker", async accounts => {
         dxmmValue.should.be.bignumber.equal(kyberValue)
     })
 
-    // TODO: work on after implementing calculating buy volume
-    it.skip("should claim seller and buyer funds from finished auctions", async () => {
+    it("should claim seller and buyer funds from finished auctions", async () => {
         const knc = await deployTokenAddToDxAndClearFirstAuction()
 
         dbg(`$$$ Before triggering auction, KNC balance: ${await dx.balances(knc.address, user)}`)
@@ -1292,22 +1291,22 @@ contract("DxMarketMaker", async accounts => {
         dbg(`$$$ After auction, seller balance: ${lastAuctionSellerBalance0}`)
         dbg(`$$$ After auction, buyer balance: ${lastAuctionBuyerBalance0}`)
 
-        await dxmm.claimAuctionTokens(knc.address, auctionIndex)
+        await dxmm.claimAuctionTokens(knc.address, weth.address, user)
 
         const kncBalance = await dx.balances(knc.address, user)
         const wethBalance = await dx.balances(weth.address, user)
         const lastAuctionSellerBalance = await dx.sellerBalances(knc.address, weth.address, auctionIndex, user)
         const lastAuctionBuyerBalance = await dx.buyerBalances(knc.address, weth.address, auctionIndex, user)
 
-        dbg(`$$$ After claiming, KNC balance: ${kncBalance0}`)
-        dbg(`$$$ After claiming, WETH balance: ${wethBalance0}`)
-        dbg(`$$$ After claiming, seller balance: ${lastAuctionSellerBalance0}`)
-        dbg(`$$$ After claiming, buyer balance: ${lastAuctionBuyerBalance0}`)
+        dbg(`$$$ After claiming, KNC balance: ${kncBalance}`)
+        dbg(`$$$ After claiming, WETH balance: ${wethBalance}`)
+        dbg(`$$$ After claiming, seller balance: ${lastAuctionSellerBalance}`)
+        dbg(`$$$ After claiming, buyer balance: ${lastAuctionBuyerBalance}`)
 
         lastAuctionSellerBalance.should.be.bignumber.equal(0)
         lastAuctionBuyerBalance.should.be.bignumber.equal(0)
-        kncBalance.should.be.bignumber.equal(kncBalance0 + lastAuctionSellerBalance0)
-        wethBalance.should.be.bignumber.equal(wethBalance0 + lastAuctionBuyerBalance0)
+        kncBalance.should.be.bignumber.equal(new BigNumber(kncBalance0).add(new BigNumber(lastAuctionSellerBalance0)))
+        wethBalance.should.be.bignumber.equal(new BigNumber(wethBalance0).add(new BigNumber(lastAuctionBuyerBalance0)))
     })
 
     it("does dxmm have sufficient funds? (token and weth)")
@@ -1322,45 +1321,6 @@ contract("DxMarketMaker", async accounts => {
     it("calculate missing amount and postSell should be in 1 tx")
 
     // TODO: Support the opposite direction
-    const flowPseudoCode = `
-    switch(KncAuctionState()):
-        case AUCTION_TRIGGERED_WAITING:
-            return  // nothing to do but wait now
-
-        case NO_AUCTION_TRIGGERED:
-            // Claim unclaimed KNC and WETH
-            if currentAuctionIndex > lastClaimedAuctionIndex:
-                auctionIndices = [lastClaimedAuctionIndex + 1 to currentAuctionIndex(excluding)]
-                claimTokensFromSeveralAuctionsAsSeller(knc, weth, auctionIndices)
-                claimTokensFromSeveralAuctionsAsBuyer(knc, weth, auctionIndices)
-
-            // Trigger auction
-            missingKncToStartAuction = calculateMissingTokenForAuctionStart(knc)
-            if missingKncToStartAuction == 0:
-                ERROR - Why auction has not started?
-
-            if dxmm.balanace(KNC) < missingKncToStartAuction:
-                // TODO: buy required KNC, start the auction and then notify
-                FINISH WITH ERROR - desposit KNC
-            deposit(missingKncToStartAuction)
-
-            // trigger Auction
-            postSellOrder(KNC, WETH, minimumAuctionAmount)
-
-        case AUCTION_IN_PROGRESS:
-            if isKncCheaperThanOnKyber():
-                postBuyOrder(calculateKncWePutInAuction())
-
-        ----
-        # alternative flow:
-
-        if not auctionTriggered():
-            triggerAuction()
-
-        if auctionRunning():
-            maybeBuyKncIfCheaperThanKyber()
-    `
-
     it.skip("sell to start auction, wait until price is right, then buy everything", async () => {
         const knc = await deployTokenAddToDxAndClearFirstAuction()
 

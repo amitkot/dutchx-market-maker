@@ -1,4 +1,4 @@
-pragma solidity ^0.4.18;
+pragma solidity ^0.4.23;
 
 
 /* all this file is based on code from open zepplin
@@ -110,7 +110,7 @@ contract BasicToken is ERC20Basic {
     function transfer(address _to, uint _value)  public onlyPayloadSize(2 * 32) returns (bool) {
         balances[msg.sender] = balances[msg.sender].sub(_value);
         balances[_to] = balances[_to].add(_value);
-        Transfer(msg.sender, _to, _value);
+        emit Transfer(msg.sender, _to, _value);
         return true;
     }
 
@@ -143,13 +143,13 @@ contract StandardToken is BasicToken, ERC20 {
         balances[_to] = balances[_to].add(_value);
         balances[_from] = balances[_from].sub(_value);
         allowed[_from][msg.sender] = _allowance.sub(_value);
-        Transfer(_from, _to, _value);
+        emit Transfer(_from, _to, _value);
         return true;
     }
 
     function approve(address _spender, uint _value) public returns (bool) {
         allowed[msg.sender][_spender] = _value;
-        Approval(msg.sender, _spender, _value);
+        emit Approval(msg.sender, _spender, _value);
         return true;
     }
 
@@ -187,8 +187,8 @@ contract TestToken is StandardToken {
     function burn(uint _value) public returns (bool) {
         balances[msg.sender] = balances[msg.sender].sub(_value);
         totalSupply = totalSupply.sub(_value);
-        Burn(msg.sender, _value);
-        Transfer(msg.sender, address(0x0), _value);
+        emit Burn(msg.sender, _value);
+        emit Transfer(msg.sender, address(0x0), _value);
         return true;
     }
 

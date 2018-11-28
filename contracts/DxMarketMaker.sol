@@ -30,10 +30,6 @@ contract DxMarketMaker is Withdrawable {
     // Declared in DutchExchange contract but not public.
     uint internal constant DX_AUCTION_START_WAITING_FOR_FUNDING = 1;
 
-    DutchExchange public dx;
-    EtherToken public weth;
-    KyberNetworkProxy public kyberNetworkProxy;
-
     enum AuctionState {
         NO_AUCTION_TRIGGERED,
         AUCTION_TRIGGERED_WAITING,
@@ -43,6 +39,12 @@ contract DxMarketMaker is Withdrawable {
     AuctionState constant public NO_AUCTION_TRIGGERED = AuctionState.NO_AUCTION_TRIGGERED;
     AuctionState constant public AUCTION_TRIGGERED_WAITING = AuctionState.AUCTION_TRIGGERED_WAITING;
     AuctionState constant public AUCTION_IN_PROGRESS = AuctionState.AUCTION_IN_PROGRESS;
+
+    DutchExchange public dx;
+    EtherToken public weth;
+    KyberNetworkProxy public kyberNetworkProxy;
+
+    uint public lastClaimedAuctionIndex = 0;
 
     constructor(address _dx, address _weth, address _kyberNetworkProxy) public {
         require(address(_dx) != address(0));
@@ -234,16 +236,24 @@ contract DxMarketMaker is Withdrawable {
     function claimAuctionTokens(
         address sellToken,
         address buyToken,
-        uint auctionIndex
+        address account
     )
         public
     {
-        // TODO: Claim unclaimed KNC and WETH
-        // if (currentAuctionIndex > lastClaimedAuctionIndex) {
-        //     auctionIndices = [lastClaimedAuctionIndex + 1 to currentAuctionIndex(excluding)]
-        //     claimTokensFromSeveralAuctionsAsSeller(knc, weth, auctionIndices)
-        //     claimTokensFromSeveralAuctionsAsBuyer(knc, weth, auctionIndices)
-        // }
+        uint lastCompletedAuction = dx.getAuctionIndex(sellToken, buyToken) - 1;
+
+        if (lastCompletedAuction <= lastClaimedAuctionIndex) return;
+
+        for (uint i = lastClaimedAuctionIndex + 1; i <= lastCompletedAuction; i++) {
+            if (dx.sellerBalances(sellToken, buyToken, i, account) > 0) {
+                dx.claimSellerFunds(sellToken, buyToken, account, i);
+            }
+            if (dx.buyerBalances(sellToken, buyToken, i, account) > 0) {
+                dx.claimBuyerFunds(sellToken, buyToken, account, i);
+            }
+        }
+
+        lastClaimedAuctionIndex = lastCompletedAuction;
     }
 
     function willAmountClearAuction(
