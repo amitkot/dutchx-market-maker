@@ -58,8 +58,8 @@ function toHexString(byteArray) {
 ////////////////////////////////////////////////////////////////////////////////
 
 module.exports.sendPromise = function(method, params) {
-    return new Promise(function(fulfill, reject){
-        web3.currentProvider.sendAsync({
+    return new Promise(function(fulfill, reject) {
+        web3.currentProvider.send({
           jsonrpc: '2.0',
           method,
           params: params || [],

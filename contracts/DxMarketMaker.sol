@@ -13,6 +13,7 @@ interface KyberNetworkProxy {
         returns (uint expectedRate, uint slippageRate);
 }
 
+
 interface DxPriceOracleInterface {
     function getUSDETHPrice() public view returns (uint256);
 }
@@ -28,7 +29,7 @@ contract DxMarketMaker is Withdrawable {
     );
 
     // Declared in DutchExchange contract but not public.
-    uint internal constant DX_AUCTION_START_WAITING_FOR_FUNDING = 1;
+    uint public constant DX_AUCTION_START_WAITING_FOR_FUNDING = 1;
 
     enum AuctionState {
         NO_AUCTION_TRIGGERED,
@@ -44,7 +45,8 @@ contract DxMarketMaker is Withdrawable {
     EtherToken public weth;
     KyberNetworkProxy public kyberNetworkProxy;
 
-    uint public lastClaimedAuctionIndex = 0;
+    // Token => Token => auctionIndex
+    mapping (address => mapping (address => uint)) public lastClaimedAuctionIndex;
 
     constructor(address _dx, address _weth, address _kyberNetworkProxy) public {
         require(address(_dx) != address(0));
@@ -129,13 +131,16 @@ contract DxMarketMaker is Withdrawable {
         );
     }
 
-    function calculateMissingTokenForAuctionStart(address token)
+    function calculateMissingTokenForAuctionStart(
+        address sellToken,
+        address buyToken
+    )
         public
         view
         returns (uint)
     {
-        uint currentAuctionSellVolume = dx.sellVolumesCurrent(token, weth);
-        uint thresholdTokenWei = thresholdNewAuctionToken(token);
+        uint currentAuctionSellVolume = dx.sellVolumesCurrent(sellToken, buyToken);
+        uint thresholdTokenWei = thresholdNewAuctionToken(sellToken);
 
         if (thresholdTokenWei > currentAuctionSellVolume) {
             return thresholdTokenWei - currentAuctionSellVolume;
@@ -233,6 +238,7 @@ contract DxMarketMaker is Withdrawable {
         return mul(sellVolume, num) / den - buyVolume;
     }
 
+    // XXX: DOES NOT SUPPORT MULTIPLE ACCOUNTS!
     function claimAuctionTokens(
         address sellToken,
         address buyToken,
@@ -242,9 +248,9 @@ contract DxMarketMaker is Withdrawable {
     {
         uint lastCompletedAuction = dx.getAuctionIndex(sellToken, buyToken) - 1;
 
-        if (lastCompletedAuction <= lastClaimedAuctionIndex) return;
+        if (lastCompletedAuction <= lastClaimedAuctionIndex[sellToken][buyToken]) return;
 
-        for (uint i = lastClaimedAuctionIndex + 1; i <= lastCompletedAuction; i++) {
+        for (uint i = lastClaimedAuctionIndex[sellToken][buyToken] + 1; i <= lastCompletedAuction; i++) {
             if (dx.sellerBalances(sellToken, buyToken, i, account) > 0) {
                 dx.claimSellerFunds(sellToken, buyToken, account, i);
             }
@@ -253,7 +259,47 @@ contract DxMarketMaker is Withdrawable {
             }
         }
 
-        lastClaimedAuctionIndex = lastCompletedAuction;
+        lastClaimedAuctionIndex[sellToken][buyToken] = lastCompletedAuction;
+    }
+
+    function claimSpecificAuctionTokens(
+        address sellToken,
+        address buyToken,
+        uint auctionIndex
+    )
+        public
+    {
+    }
+
+    event AuctionTriggered(
+        address sellToken,
+        address buyToken,
+        uint auctionIndex,
+        uint sellTokenAmount
+    );
+
+    function triggerAuction(
+        address sellToken,
+        address buyToken
+    )
+        public
+        returns (bool success)
+    {
+        // TODO: require enough tokens
+        // TODO: handle already during auction
+        // TODO: handle missingTokens == 0
+        require(false, "Not enough tokens to trigger auction");
+        uint missingTokens = addFee(
+            calculateMissingTokenForAuctionStart(
+                sellToken,
+                buyToken
+            )
+        );
+        uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
+        dx.postSellOrder(sellToken, buyToken, auctionIndex, missingTokens);
+
+        emit AuctionTriggered(sellToken, buyToken, auctionIndex, missingTokens);
+        return true;
     }
 
     function willAmountClearAuction(
@@ -342,4 +388,5 @@ contract DxMarketMaker is Withdrawable {
             return uint(a);
         }
     }
+    
 }

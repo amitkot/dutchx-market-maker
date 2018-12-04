@@ -9,7 +9,7 @@ function truffleConfig ({
   mnemonic = DEFAULT_MNEMONIC,
   gasPriceGWei = DEFAULT_GAS_PRICE_GWEI,
   gas = GAS_LIMIT,
-  optimizedEnabled = false,
+  optimizedEnabled = true,
   urlRinkeby = 'https://rinkeby.infura.io/',
   urlMainnet = 'https://mainnet.infura.io',
   urlDevelopment = 'localhost',
@@ -33,7 +33,8 @@ function truffleConfig ({
         port: portDevelopment,
         gas,
         gasPrice,
-        network_id: '*'
+        network_id: '*',
+        websockets: true
       },
       mainnet: {
         provider: _getProvider(urlMainnet),
@@ -48,6 +49,14 @@ function truffleConfig ({
         gasPrice
       }
     },
+    // Native binary
+    compilers: {
+        solc: {
+            // version: "native"
+            version: "0.4.24",
+            docker: true
+        }
+    },
     solc: {
       optimizer: {
         enabled: optimizedEnabled
@@ -57,5 +66,5 @@ function truffleConfig ({
 }
 
 module.exports = truffleConfig({
-  optimizedEnabled: true
+  optimizedEnabled: true,
 })
