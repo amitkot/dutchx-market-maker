@@ -283,18 +283,19 @@ contract DxMarketMaker is Withdrawable {
         address buyToken
     )
         public
-        returns (bool success)
+        returns (bool triggered)
     {
-        // TODO: require enough tokens
-        // TODO: handle already during auction
-        // TODO: handle missingTokens == 0
-        require(false, "Not enough tokens to trigger auction");
         uint missingTokens = addFee(
             calculateMissingTokenForAuctionStart(
                 sellToken,
                 buyToken
             )
         );
+        if (missingTokens == 0) return false;
+
+        uint balance = dx.balances(sellToken, address(this));
+        require(balance >= missingTokens, "Not enough tokens to trigger auction");
+
         uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
         dx.postSellOrder(sellToken, buyToken, auctionIndex, missingTokens);
 
@@ -388,5 +389,5 @@ contract DxMarketMaker is Withdrawable {
             return uint(a);
         }
     }
-    
+
 }

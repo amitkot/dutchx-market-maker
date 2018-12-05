@@ -114,21 +114,6 @@ contract("DxMarketMaker", async accounts => {
     }
 
     async function deployTokenAddToDxAndClearFirstAuction() {
-        // XXX
-        const oracleAddress = await dx.ethUSDOracle()
-        dbg(`\t oracle address is ${oracleAddress}`)
-        const oracle = await PriceOracleInterface.at(oracleAddress)
-        dbg(`\t dx.ethUSDOracle is ${oracle}`)
-        const priceFeedSource = await oracle.priceFeedSource.call()
-        dbg(`\t dx.ethUSDOracle.priceFeedSource is ${priceFeedSource}`)
-        const price = await oracle.getUSDETHPrice.call()
-        dbg(`\t dx.ethUSDOracle.getUSDETHPrice is ${price}`)
-        const medianizer = await artifacts.require("Medianizer")
-        const m = await medianizer.at(priceFeedSource)
-        dbg(`\t medianizer is ${m}`)
-        const p = await m.peek()
-        dbg(`\t medianizer(priceFeed).peek(): price=${p[0]}, valid=${p[1]}`)
-
         const lister = admin
         const initialWethWei = web3.utils.toWei("100")
         const knc = await deployToken()
@@ -1497,16 +1482,21 @@ contract("DxMarketMaker", async accounts => {
         it("dxmm triggered the auction and some user cleared it")
     })
 
-    // describe.only("trigger auctions", async () => {
-    describe.skip("trigger auctions", async () => {
+    describe("trigger auctions", async () => {
         it("deposit and trigger auction", async () => {
             const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-            await knc.transfer(dxmm.address, toBN(10e25), { from: admin })
-            await dxmm.depositToDx(knc.address, toBN(10e25), { from: admin })
+            const amount = web3.utils.toWei("100000000")
+            await knc.transfer(dxmm.address, amount, { from: admin })
+            await dxmm.depositToDx(knc.address, amount, { from: admin })
 
+            const triggered = await dxmm.triggerAuction.call(
+                knc.address,
+                weth.address
+            )
             await dxmm.triggerAuction(knc.address, weth.address)
 
+            triggered.should.be.true
             dx.getAuctionStart(knc.address, weth.address)
             .should.eventually.not.be.eq.BN(
                 DX_AUCTION_START_WAITING_FOR_FUNDING
@@ -1516,18 +1506,45 @@ contract("DxMarketMaker", async accounts => {
         it("revert if doesn't have enough balance", async () => {
             const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-            // await dxmm.triggerAuction(knc.address, weth.address)
-            // await truffleAssert.reverts(
-            //     dxmm.triggerAuction(knc.address, weth.address),
-            //     "Not enough tokens to trigger auction"
-            // )
+            await truffleAssert.reverts(
+                dxmm.triggerAuction(knc.address, weth.address),
+                "Not enough tokens to trigger auction"
+            )
+        })
 
-            try {
-                await dxmm.triggerAuction(knc.address, weth.address)
-            } catch (error) {
-                dbg(`error: ${error}`)
-                dbg(`error.message: ${error.message}`)
-            }
+        it("fail if auction has been triggered", async () => {
+            const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+            const auctionIndex = await triggerAuction(knc, user)
+
+            const amount = web3.utils.toWei("100000000")
+            await knc.transfer(dxmm.address, amount, { from: admin })
+            await dxmm.depositToDx(knc.address, amount, { from: admin })
+
+            const triggered = await dxmm.triggerAuction.call(
+                knc.address,
+                weth.address
+            )
+
+            triggered.should.be.false
+        })
+
+        it("fail if auction is in progress", async () => {
+            const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+            const auctionIndex = await triggerAuction(knc, user)
+            await waitForTriggeredAuctionToStart(knc, auctionIndex)
+
+            const amount = web3.utils.toWei("100000000")
+            await knc.transfer(dxmm.address, amount, { from: admin })
+            await dxmm.depositToDx(knc.address, amount, { from: admin })
+
+            const triggered = await dxmm.triggerAuction.call(
+                knc.address,
+                weth.address
+            )
+
+            triggered.should.be.false
         })
     })
 
