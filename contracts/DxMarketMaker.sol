@@ -58,34 +58,7 @@ contract DxMarketMaker is Withdrawable {
         kyberNetworkProxy = KyberNetworkProxy(_kyberNetworkProxy);
     }
 
-    function addToken(
-        address token,
-        uint amountEthWei,
-        uint tokenToEthNum,
-        uint tokenToEthDen
-    )
-        public
-        returns (bool)
-    {
-        // fund
-        require(weth.transferFrom(msg.sender, address(this), amountEthWei));
-
-        weth.approve(address(dx), amountEthWei);
-        dx.deposit(address(weth), amountEthWei);
-
-        // add token pair
-        dx.addTokenPair(
-            address(weth),
-            address(token),
-            amountEthWei,   // weth funding
-            0,              // other token funding
-            tokenToEthNum,
-            tokenToEthDen
-        );
-
-        return true;
-    }
-
+    // TODO: emit event
     function depositToDx(address token, uint amount)
         public
         onlyAdmin
@@ -95,6 +68,7 @@ contract DxMarketMaker is Withdrawable {
         return dx.deposit(token, amount);
     }
 
+    // TODO: emit event
     function withdrawFromDx(address token, uint amount)
         public
         onlyAdmin
@@ -161,8 +135,15 @@ contract DxMarketMaker is Withdrawable {
         );
     }
 
-    function getAuctionState(address token) public view returns (AuctionState) {
-        uint auctionStart = dx.getAuctionStart(token, weth);
+    function getAuctionState(
+        address sellToken,
+        address buyToken
+    )
+        public
+        view
+        returns (AuctionState)
+    {
+        uint auctionStart = dx.getAuctionStart(sellToken, buyToken);
         if (auctionStart > DX_AUCTION_START_WAITING_FOR_FUNDING) {
             // DutchExchange logic uses auction start time.
             /* solhint-disable not-rely-on-time */
@@ -192,8 +173,9 @@ contract DxMarketMaker is Withdrawable {
         return (rate, 10 ** token.decimals());
     }
 
-    function sellTokenAmountInCurrentAuction(
-        address token,
+    function tokensSoldInCurrentAuction(
+        address sellToken,
+        address buyToken,
         uint auctionIndex,
         address account
     )
@@ -201,13 +183,14 @@ contract DxMarketMaker is Withdrawable {
         view
         returns (uint)
     {
-        return dx.sellerBalances(token, weth, auctionIndex, account);
+        return dx.sellerBalances(sellToken, buyToken, auctionIndex, account);
     }
 
     // The amount of tokens that matches the amount sold by provided account in
     // specified auction index, deducting the amount that was already bought.
     function calculateAuctionBuyTokens(
         address sellToken,
+        address buyToken,
         uint auctionIndex,
         address account
     )
@@ -215,10 +198,9 @@ contract DxMarketMaker is Withdrawable {
         view
         returns (uint)
     {
-        // TODO: support token -> token
-        address buyToken = weth;
-        uint sellVolume = sellTokenAmountInCurrentAuction(
+        uint sellVolume = tokensSoldInCurrentAuction(
             sellToken,
+            buyToken,
             auctionIndex,
             account
         );
@@ -239,6 +221,7 @@ contract DxMarketMaker is Withdrawable {
     }
 
     // XXX: DOES NOT SUPPORT MULTIPLE ACCOUNTS!
+    // TODO: emit event
     function claimAuctionTokens(
         address sellToken,
         address buyToken,
@@ -262,6 +245,7 @@ contract DxMarketMaker is Withdrawable {
         lastClaimedAuctionIndex[sellToken][buyToken] = lastCompletedAuction;
     }
 
+    // TODO: emit event
     function claimSpecificAuctionTokens(
         address sellToken,
         address buyToken,
@@ -275,9 +259,11 @@ contract DxMarketMaker is Withdrawable {
         address sellToken,
         address buyToken,
         uint auctionIndex,
-        uint sellTokenAmount
+        uint sellTokenAmount,
+        uint sellTokenAmountWithFee
     );
 
+    // TODO: maybe verify that pair is listed in dutchx
     function triggerAuction(
         address sellToken,
         address buyToken
@@ -285,21 +271,85 @@ contract DxMarketMaker is Withdrawable {
         public
         returns (bool triggered)
     {
-        uint missingTokens = addFee(
-            calculateMissingTokenForAuctionStart(
-                sellToken,
-                buyToken
-            )
+        uint missingTokens = calculateMissingTokenForAuctionStart(
+            sellToken,
+            buyToken
         );
-        if (missingTokens == 0) return false;
+        uint missingTokensWithFee = addFee(missingTokens);
+        if (missingTokensWithFee == 0) return false;
 
         uint balance = dx.balances(sellToken, address(this));
-        require(balance >= missingTokens, "Not enough tokens to trigger auction");
+        require(
+            balance >= missingTokensWithFee,
+            "Not enough tokens to trigger auction"
+        );
 
         uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
-        dx.postSellOrder(sellToken, buyToken, auctionIndex, missingTokens);
+        dx.postSellOrder(sellToken, buyToken, auctionIndex, missingTokensWithFee);
 
-        emit AuctionTriggered(sellToken, buyToken, auctionIndex, missingTokens);
+        emit AuctionTriggered(
+            sellToken,
+            buyToken,
+            auctionIndex,
+            missingTokens,
+            missingTokensWithFee
+        );
+        return true;
+    }
+
+    // TODO: emit event
+    // TODO: check for all the requirements of dutchx
+    event BoughtInAuction(
+        address sellToken,
+        address buyToken,
+        uint auctionIndex,
+        uint tokensBought,
+        bool clearedAuction
+    );
+
+    function buyInAuction(
+        address sellToken,
+        address buyToken
+    )
+        public
+        returns (bool bought)
+    {
+        require(
+            getAuctionState(sellToken, buyToken) == AuctionState.AUCTION_IN_PROGRESS,
+            "No auction in progress"
+        );
+
+        uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
+        uint tokensToBuy = calculateAuctionBuyTokens(
+            sellToken,
+            buyToken,
+            auctionIndex,
+            address(this)
+        );
+        if (tokensToBuy == 0) return false;
+
+        bool willClearAuction = willAmountClearAuction(
+            sellToken,
+            buyToken,
+            auctionIndex,
+            tokensToBuy
+        );
+        if (!willClearAuction) {
+            tokensToBuy = addFee(tokensToBuy);
+        }
+
+        require(
+            dx.balances(buyToken, address(this)) >= tokensToBuy,
+            "Not enough buy token to buy required amount"
+        );
+        dx.postBuyOrder(sellToken, buyToken, auctionIndex, tokensToBuy);
+        emit BoughtInAuction(
+            sellToken,
+            buyToken,
+            auctionIndex,
+            tokensToBuy,
+            willClearAuction
+        );
         return true;
     }
 
@@ -389,5 +439,4 @@ contract DxMarketMaker is Withdrawable {
             return uint(a);
         }
     }
-
 }

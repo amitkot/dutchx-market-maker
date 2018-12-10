@@ -1,4 +1,4 @@
-pragma solidity ^0.4.23;
+pragma solidity ^0.4.24;
 
 
 /* all this file is based on code from open zepplin
@@ -135,7 +135,7 @@ contract StandardToken is BasicToken, ERC20 {
 
     function transferFrom(address _from, address _to, uint _value) public returns (bool) {
 
-        var _allowance = allowed[_from][msg.sender];
+        uint _allowance = allowed[_from][msg.sender];
 
         // Check is not needed because sub(_allowance, _value) will already revert if this condition is not met
         if (_value > _allowance) revert();
@@ -174,7 +174,7 @@ contract TestToken is StandardToken {
     uint public decimals = 18;
     uint public INITIAL_SUPPLY = 10**(50+18);
 
-    function TestToken(string _name, string _symbol, uint _decimals) public {
+    constructor(string _name, string _symbol, uint _decimals) public {
         totalSupply = INITIAL_SUPPLY;
         balances[msg.sender] = INITIAL_SUPPLY;
         name = _name;
