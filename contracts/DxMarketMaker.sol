@@ -245,16 +245,6 @@ contract DxMarketMaker is Withdrawable {
         lastClaimedAuctionIndex[sellToken][buyToken] = lastCompletedAuction;
     }
 
-    // TODO: emit event
-    function claimSpecificAuctionTokens(
-        address sellToken,
-        address buyToken,
-        uint auctionIndex
-    )
-        public
-    {
-    }
-
     event AuctionTriggered(
         address sellToken,
         address buyToken,
