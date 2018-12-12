@@ -46,7 +46,7 @@ contract DxMarketMaker is Withdrawable {
     KyberNetworkProxy public kyberNetworkProxy;
 
     // Token => Token => auctionIndex
-    mapping (address => mapping (address => uint)) public lastClaimedAuctionIndex;
+    mapping (address => mapping (address => uint)) public lastClaimedAuction;
 
     constructor(address _dx, address _weth, address _kyberNetworkProxy) public {
         require(address(_dx) != address(0));
@@ -220,29 +220,48 @@ contract DxMarketMaker is Withdrawable {
         return mul(sellVolume, num) / den - buyVolume;
     }
 
-    // XXX: DOES NOT SUPPORT MULTIPLE ACCOUNTS!
-    // TODO: emit event
-    function claimAuctionTokens(
+    event ClaimedAuctionTokens(
         address sellToken,
         address buyToken,
-        address account
+        uint previousLastCompletedAuction,
+        uint newLastCompletedAuction,
+        uint sellerFunds,
+        uint buyerFunds
+    );
+
+    function claimAuctionTokens(
+        address sellToken,
+        address buyToken
     )
         public
+        returns (uint sellerFunds, uint buyerFunds)
     {
+        uint initialLastClaimed = lastClaimedAuction[sellToken][buyToken];
+
         uint lastCompletedAuction = dx.getAuctionIndex(sellToken, buyToken) - 1;
+        if (lastCompletedAuction <= initialLastClaimed) return;
 
-        if (lastCompletedAuction <= lastClaimedAuctionIndex[sellToken][buyToken]) return;
-
-        for (uint i = lastClaimedAuctionIndex[sellToken][buyToken] + 1; i <= lastCompletedAuction; i++) {
-            if (dx.sellerBalances(sellToken, buyToken, i, account) > 0) {
-                dx.claimSellerFunds(sellToken, buyToken, account, i);
+        uint amount;
+        for (uint i = lastClaimedAuction[sellToken][buyToken] + 1; i <= lastCompletedAuction; i++) {
+            if (dx.sellerBalances(sellToken, buyToken, i, address(this)) > 0) {
+                (amount, ) = dx.claimSellerFunds(sellToken, buyToken, address(this), i);
+                sellerFunds += amount;
             }
-            if (dx.buyerBalances(sellToken, buyToken, i, account) > 0) {
-                dx.claimBuyerFunds(sellToken, buyToken, account, i);
+            if (dx.buyerBalances(sellToken, buyToken, i, address(this)) > 0) {
+                (amount, ) = dx.claimBuyerFunds(sellToken, buyToken, address(this), i);
+                buyerFunds += amount;
             }
         }
 
-        lastClaimedAuctionIndex[sellToken][buyToken] = lastCompletedAuction;
+        lastClaimedAuction[sellToken][buyToken] = lastCompletedAuction;
+        emit ClaimedAuctionTokens(
+            sellToken,
+            buyToken,
+            initialLastClaimed,
+            lastCompletedAuction,
+            sellerFunds,
+            buyerFunds
+        );
     }
 
     event AuctionTriggered(
@@ -293,7 +312,7 @@ contract DxMarketMaker is Withdrawable {
         address sellToken,
         address buyToken,
         uint auctionIndex,
-        uint tokensBought,
+        uint buyTokenAmount,
         bool clearedAuction
     );
 
@@ -310,34 +329,34 @@ contract DxMarketMaker is Withdrawable {
         );
 
         uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
-        uint tokensToBuy = calculateAuctionBuyTokens(
+        uint buyTokenAmount = calculateAuctionBuyTokens(
             sellToken,
             buyToken,
             auctionIndex,
             address(this)
         );
-        if (tokensToBuy == 0) return false;
+        if (buyTokenAmount == 0) return false;
 
         bool willClearAuction = willAmountClearAuction(
             sellToken,
             buyToken,
             auctionIndex,
-            tokensToBuy
+            buyTokenAmount
         );
         if (!willClearAuction) {
-            tokensToBuy = addFee(tokensToBuy);
+            buyTokenAmount = addFee(buyTokenAmount);
         }
 
         require(
-            dx.balances(buyToken, address(this)) >= tokensToBuy,
+            dx.balances(buyToken, address(this)) >= buyTokenAmount,
             "Not enough buy token to buy required amount"
         );
-        dx.postBuyOrder(sellToken, buyToken, auctionIndex, tokensToBuy);
+        dx.postBuyOrder(sellToken, buyToken, auctionIndex, buyTokenAmount);
         emit BoughtInAuction(
             sellToken,
             buyToken,
             auctionIndex,
-            tokensToBuy,
+            buyTokenAmount,
             willClearAuction
         );
         return true;
