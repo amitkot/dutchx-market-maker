@@ -24,7 +24,7 @@ interface DxPriceOracleInterface {
 // TODO: add support to token -> token
 contract DxMarketMaker is Withdrawable {
     // This is the representation of ETH as an ERC20 Token for Kyber Network.
-    ERC20 constant internal ETH_TOKEN_ADDRESS = ERC20(
+    ERC20 constant internal KYBER_ETH_TOKEN = ERC20(
         0x00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
     );
 
@@ -157,20 +157,23 @@ contract DxMarketMaker is Withdrawable {
     }
 
     // TODO: support token -> token
-    function getKyberRate(address _token, uint amount)
+    function getKyberRate(address _sellToken, address _buyToken, uint amount)
         public
         view
         returns (uint num, uint den)
     {
-        ERC20 token = ERC20(_token);
+        ERC20 sellToken = _sellToken == address(weth) ? KYBER_ETH_TOKEN : ERC20(sellToken);
+        ERC20 buyToken = _buyToken == address(weth) ? KYBER_ETH_TOKEN : ERC20(buyToken);
         uint rate;
         (rate, ) = kyberNetworkProxy.getExpectedRate(
-            token,
-            ETH_TOKEN_ADDRESS,
+            sellToken,
+            buyToken,
             amount
         );
 
-        return (rate, 10 ** token.decimals());
+        // KyberNetworkProxy.getExpectedRate() always returns a result that is
+        // rate / 10**18.
+        return (rate, 10 ** 18);
     }
 
     function tokensSoldInCurrentAuction(
@@ -403,6 +406,54 @@ contract DxMarketMaker is Withdrawable {
         // 10^30 * 10^37 = 10^67
         uint outstandingVolume = atleastZero(int(mul(sellVolume, num) / den - buyVolume));
         return amount >= outstandingVolume;
+    }
+
+    function magic(
+        address sellToken,
+        address buyToken
+    )
+        public
+        returns (bool)
+    {
+        AuctionState state = getAuctionState(sellToken, buyToken);
+
+        if (state == AuctionState.AUCTION_TRIGGERED_WAITING) {
+            return false;
+        }
+
+        if (state == AuctionState.NO_AUCTION_TRIGGERED) {
+            claimAuctionTokens(sellToken, buyToken);
+            triggerAuction(sellToken, buyToken);
+            return true;
+        }
+
+        if (state == AuctionState.AUCTION_IN_PROGRESS) {
+            // TODO: extract into a new function
+            uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
+            uint amount = calculateAuctionBuyTokens(
+                sellToken,
+                buyToken,
+                auctionIndex,
+                address(this)
+            );
+            uint dNum;
+            uint dDen;
+            (dNum, dDen) = dx.getCurrentAuctionPrice(sellToken, buyToken, auctionIndex);
+            uint kNum;
+            uint kDen;
+            (kNum, kDen) = getKyberRate(sellToken, buyToken, amount);
+
+            // TODO: Check for overflow explicitly?
+            if (mul(dNum, kDen) > mul(kNum, dDen)) {
+                return false;
+            }
+
+            buyInAuction(sellToken, buyToken);
+            return true;
+        }
+
+        // Should be unreachable.
+        require(false, "Unknown auction state");
     }
 
     // --- Safe Math functions ---

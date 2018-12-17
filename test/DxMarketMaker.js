@@ -135,7 +135,7 @@ contract("DxMarketMaker", async accounts => {
         dbg(`\n--- lister deposited ${initialWethWei} WETH in DX`)
 
         // Using 0 amount as mock kyber contract returns fixed rate anyway.
-        const kyberRate = await dxmm.getKyberRate(knc.address, 0)
+        const kyberRate = await dxmm.getKyberRate(knc.address, weth.address, 0)
         // dividing by 2 to make numbers smaller, avoid reverts due to fear
         // of overflow
         const initialClosingPriceNum = kyberRate.num.divn(2)
@@ -340,6 +340,30 @@ contract("DxMarketMaker", async accounts => {
         await dbgVolumesAndPrices(sellToken, buyToken, auctionIndex)
     }
 
+    const waitUntilKyberPriceReached = async (sellToken, buyToken, auctionIndex, amount) => {
+        let price
+        let kyberPrice
+        while (true) {
+            price = await dx.getCurrentAuctionPrice(
+                sellToken.address,
+                buyToken.address,
+                auctionIndex
+            )
+            const t = await blockChainTime()
+            kyberPrice = await dxmm.getKyberRate(sellToken.address, buyToken.address, amount)
+            const a = price.num.mul(kyberPrice.den)
+            const b = kyberPrice.num.mul(price.den)
+            if (a <= b) {
+                dbg(`... at ${t} price is ${price.num / price.den} -> Done waiting!`)
+                break
+            }
+
+            const targetRate = kyberPrice.num / kyberPrice.den
+            dbg(`... at ${t} price is ${price.num / price.den} (target: ${targetRate})-> waiting 10 minutes.`)
+            await waitTimeInSeconds(10 * 60)
+        }
+    }
+
     const buyEverythingInAuction = async (knc, auctionIndex, buyer) => {
         dbg(`\n--- buyer wants to buy everything`)
         await dbgVolumesAndPrices(knc, weth, auctionIndex)
@@ -412,49 +436,6 @@ contract("DxMarketMaker", async accounts => {
         await dxmm.depositToDx(weth.address, tokensToBuy, { from: admin });
     }
 
-    // TODO: WIP
-    const flow = async (sellToken, buyToken) => {
-        console.log(`Running flow iteration for ${await sellToken.symbol()}, ${await buyToken.symbol()}`)
-        switch(await dxmm.getAuctionState(sellToken.address, buyToken.address)) {
-            case AUCTION_TRIGGERED_WAITING:
-            // do nothing
-            console.log(`Auction has been triggered, waiting for it to start`)
-            break
-
-            case NO_AUCTION_TRIGGERED:
-            await dxmm.claimAuctionTokens(token.address, weth.address)
-
-            // Trigger auction
-            // TODO: move this as a contract function:
-            const missingTokensToStartAuction = calculateMissingTokenForAuctionStart(
-                token.address,
-                weth.address
-            )
-            console.log(`missing tokens to start auction: ${missingTokensToStartAuction}`)
-
-            if (missingKncToStartAuction == 0) {
-                console.log(`ERROR: how come missing tokens are 0 and no auction triggered?`)
-                throw 'ERROR: 0 missing tokens and no auction'
-            }
-
-            if (dxmm.balanace(KNC) < missingKncToStartAuction) {
-                // TODO: buy required KNC, start the auction and then notify
-                // FINISH WITH ERROR - desposit KNC
-            }
-            deposit(missingKncToStartAuction)
-
-            // trigger Auction
-            postSellOrder(KNC, WETH, minimumAuctionAmount)
-            break
-
-            case AUCTION_IN_PROGRESS:
-            if (isKncCheaperThanOnKyber()) {
-                postBuyOrder(calculateKncWePutInAuction())
-            }
-            break
-        }
-    }
-
     before("setup accounts", async () => {
         admin = accounts[0]
         seller1 = accounts[1]
@@ -492,29 +473,9 @@ contract("DxMarketMaker", async accounts => {
         dbg(`\n--- buyer checks prices`)
         dbg(`buyer wants to buy and will wait for target price`)
 
-        let price
-        let kyberPrice
-        while (true) {
-            price = await dx.getCurrentAuctionPrice(
-                knc.address,
-                weth.address,
-                auctionIndex
-            )
 
-            // TODO: use actual amount
-            const amount = 10000
-            kyberPrice = await dxmm.getKyberRate(knc.address, amount)
-            const targetRate = kyberPrice.num / kyberPrice.den
-            const p = price.num / price.den
-            const t = await blockChainTime()
-            if (p <= targetRate) {
-                dbg(`... at ${t} price is ${p} -> Done waiting!`)
-                break
-            }
-
-            dbg(`... at ${t} price is ${p} (target: ${targetRate})-> waiting 10 minutes.`)
-            await waitTimeInSeconds(10 * 60)
-        }
+        // TODO: use actual amount
+        await waitUntilKyberPriceReached(knc, weth, auctionIndex, 10000)
 
         // Buyer buys everything
         await buyEverythingInAuction(knc, auctionIndex, buyer1)
@@ -1321,6 +1282,7 @@ contract("DxMarketMaker", async accounts => {
 
         const kyberRate = await dxmm.getKyberRate(
             knc.address,
+            weth.address,
             kncAmountInAuction /* amount */
         )
 
@@ -1971,25 +1933,193 @@ contract("DxMarketMaker", async accounts => {
         })
     })
 
-    it("does dxmm have sufficient funds? (token and weth)")
+    describe.only("unified flow", () => {
+        const hasDxPriceReachedKyber = async (sellToken, buyToken, auctionIndex) => {
+            // dutchX price should initially be higher than kyber price
+            const amount = await dxmm.calculateAuctionBuyTokens(
+                sellToken.address,
+                buyToken.address,
+                auctionIndex,
+                dxmm.address
+            )
+            const dxPrice = await dx.getCurrentAuctionPrice(sellToken.address, buyToken.address, auctionIndex)
+            const kyberPrice = await dxmm.getKyberRate(sellToken.address, buyToken.address, amount)
+            const a = dxPrice.num.mul(kyberPrice.den)
+            const b = kyberPrice.num.mul(dxPrice.den)
+            dbg(`dutchx price is ${dxPrice.num}/${dxPrice.den} = ${dxPrice.num / dxPrice.den}`)
+            dbg(`kyber  price is ${kyberPrice.num}/${kyberPrice.den} = ${kyberPrice.num / kyberPrice.den}`)
+            dbg(`a is ${a}`)
+            dbg(`b is ${b}`)
+            dbg(`a <= b? ${a.lte(b)}`)
+            return a.lte(b)
+        }
 
-    // ---------------
+        it("no auction in progress or planned - action required", async () => {
+            const knc = await deployTokenAddToDxAndClearFirstAuction()
+            await fundDxmmAndDepositToDxToken(knc)
 
-    it("should be able to withdraw all the money from dxmm")
-    it("should be able to withdraw all of the money from dx")
+            const actionRequired = await dxmm.magic.call(knc.address, weth.address)
+
+            actionRequired.should.be.true
+        })
+
+        it("no auction in progress or planned - trigger auction", async () => {
+            const knc = await deployTokenAddToDxAndClearFirstAuction()
+            await fundDxmmAndDepositToDxToken(knc)
+
+            const tx = await dxmm.magic(knc.address, weth.address)
+
+            truffleAssert.eventEmitted(tx, 'AuctionTriggered', (ev) => {
+                return (
+                    ev.sellToken === knc.address
+                    && ev.buyToken === weth.address
+                    && ev.auctionIndex == 2
+                )
+            })
+        })
+
+        it("no auction in progress or planned - previous auction funds claimed", async () => {
+            const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+            // Auctions 2, 3, 4
+            await dxmmTriggerAndClearAuction(knc, weth)
+            await dxmmTriggerAndClearAuction(knc, weth)
+            await dxmmTriggerAndClearAuction(knc, weth)
+
+            const tx = await dxmm.magic(knc.address, weth.address)
+
+            truffleAssert.eventEmitted(tx, 'ClaimedAuctionTokens', (ev) => {
+                return (
+                    ev.sellToken === knc.address
+                    && ev.buyToken === weth.address
+                    && ev.previousLastCompletedAuction == 0
+                    && ev.newLastCompletedAuction == 4
+                )
+            })
+        })
+
+        it("auction already triggered, waiting - no action required", async () => {
+            const knc = await deployTokenAddToDxAndClearFirstAuction()
+            await fundDxmmAndDepositToDxToken(knc)
+            await dxmm.triggerAuction(knc.address, weth.address)
+
+            const actionRequired = await dxmm.magic.call(knc.address, weth.address)
+
+            actionRequired.should.be.false
+        })
+
+        it("auction already triggered, waiting - no action performed", async () => {
+            const knc = await deployTokenAddToDxAndClearFirstAuction()
+            await fundDxmmAndDepositToDxToken(knc)
+            await dxmm.triggerAuction(knc.address, weth.address)
+
+            const tx = await dxmm.magic(knc.address, weth.address)
+
+            // TODO: check that NO EVENT AT ALL has been emitted
+            truffleAssert.eventNotEmitted(tx, 'ClaimedAuctionTokens')
+            truffleAssert.eventNotEmitted(tx, 'AuctionTriggered')
+            truffleAssert.eventNotEmitted(tx, 'BoughtInAuction')
+        })
+
+        it("auction in progress but price not ready for buying, waiting - nothing to do", async () => {
+            const knc = await deployTokenAddToDxAndClearFirstAuction()
+            await fundDxmmAndDepositToDxToken(knc)
+            await dxmm.triggerAuction(knc.address, weth.address)
+            const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+            await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
+
+            // dutchX price should initially be higher than kyber price
+            const amount = await dxmm.calculateAuctionBuyTokens(
+                knc.address,
+                weth.address,
+                auctionIndex,
+                dxmm.address
+            )
+            const dxPrice = await dx.getCurrentAuctionPrice(knc.address, weth.address, auctionIndex)
+            const kyberPrice = await dxmm.getKyberRate(knc.address, weth.address, amount)
+            const a = kyberPrice.num.mul(dxPrice.den)
+            const b = dxPrice.num.mul(kyberPrice.den)
+            a.should.be.lt.BN(b)
+
+            const actionRequired = await dxmm.magic.call(knc.address, weth.address)
+
+            actionRequired.should.be.false
+        })
+
+        it("auction in progress but price not ready for buying, waiting - no action performed", async () => {
+            const knc = await deployTokenAddToDxAndClearFirstAuction()
+            await fundDxmmAndDepositToDxToken(knc)
+            await dxmm.triggerAuction(knc.address, weth.address)
+            const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+            await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
+            const priceReachedKyber = await hasDxPriceReachedKyber(knc, weth, auctionIndex)
+            priceReachedKyber.should.be.false
+
+            const tx = await dxmm.magic(knc.address, weth.address)
+
+            // TODO: check that NO EVENT AT ALL has been emitted
+            truffleAssert.eventNotEmitted(tx, 'ClaimedAuctionTokens')
+            truffleAssert.eventNotEmitted(tx, 'AuctionTriggered')
+            truffleAssert.eventNotEmitted(tx, 'BoughtInAuction')
+        })
+
+        it("auction in progress, price ready for buying -> should buy", async () => {
+            const knc = await deployTokenAddToDxAndClearFirstAuction()
+            await fundDxmmAndDepositToDxToken(knc)
+            await dxmm.triggerAuction(knc.address, weth.address)
+            const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+            await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
+
+            const amount = await dxmm.calculateAuctionBuyTokens(
+                knc.address,
+                weth.address,
+                auctionIndex,
+                dxmm.address
+            )
+            await waitUntilKyberPriceReached(knc, weth, auctionIndex, amount)
+
+            const actionRequired = await dxmm.magic.call(knc.address, weth.address)
+
+            const priceReachedKyber = await hasDxPriceReachedKyber(knc, weth, auctionIndex)
+            priceReachedKyber.should.be.true
+            actionRequired.should.be.true
+        })
+
+        it.only("auction in progress, price ready for buying -> bought and cleared auction", async () => {
+            const knc = await deployTokenAddToDxAndClearFirstAuction()
+            await fundDxmmAndDepositToDxToken(knc)
+            await dxmm.triggerAuction(knc.address, weth.address)
+            const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+            await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
+
+            const amount = await dxmm.calculateAuctionBuyTokens(
+                knc.address,
+                weth.address,
+                auctionIndex,
+                dxmm.address
+            )
+            await waitUntilKyberPriceReached(knc, weth, auctionIndex, amount)
+            const priceReachedKyber = await hasDxPriceReachedKyber(knc, weth, auctionIndex)
+            priceReachedKyber.should.be.true
+
+            await fundDxmmAndDepositToDxWethForAuction(knc, weth, auctionIndex)
+
+            const tx = await dxmm.magic(knc.address, weth.address)
+
+            truffleAssert.eventEmitted(tx, 'BoughtInAuction', (ev) => {
+                return (
+                    ev.sellToken === knc.address
+                    && ev.buyToken === weth.address
+                    && auctionIndex === auctionIndex
+                )
+            })
+        })
+
+        it("does dxmm have sufficient funds? (token and weth)")
+    })
 
     it("should start sale only if has enough ETH to end")
-
     it("calculate missing amount and postSell should be in 1 tx")
-
-    // TODO: Support the opposite direction
-    it.skip("sell to start auction, wait until price is right, then buy everything", async () => {
-        const knc = await deployTokenAddToDxAndClearFirstAuction()
-
-        await flow(knc, weth)
-
-        // verify auction closed successfully
-    })
 })
 
 
