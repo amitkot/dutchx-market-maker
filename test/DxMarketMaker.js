@@ -1360,7 +1360,7 @@ contract("DxMarketMaker", async accounts => {
             ).returned
 
             const claimed = await dxmm.claimAuctionTokens.call(knc.address, weth.address)
-            const tx = await dxmm.claimAuctionTokens(knc.address, weth.address)
+            const res = await dxmm.claimAuctionTokens(knc.address, weth.address)
 
             claimed.sellerFunds.should.be.eq.BN(claimedSellerAuction)
             claimed.buyerFunds.should.be.eq.BN(claimedBuyerAuction)
@@ -1372,7 +1372,7 @@ contract("DxMarketMaker", async accounts => {
             dbg(`%%% ev.sellerFunds.eq(${claimedSellerAuction})`)
             dbg(`%%% ev.buyerFunds.eq(${claimedBuyerAuction})`)
 
-            truffleAssert.eventEmitted(tx, 'ClaimedAuctionTokens', (ev) => {
+            truffleAssert.eventEmitted(res, 'ClaimedAuctionTokens', (ev) => {
                 return (
                     ev.sellToken === knc.address
                     && ev.buyToken === weth.address
@@ -1833,14 +1833,14 @@ contract("DxMarketMaker", async accounts => {
                 auctionIndex,
                 dxmm.address
             )
-            const tx = await dxmm.buyInAuction(knc.address, weth.address)
+            const res = await dxmm.buyInAuction(knc.address, weth.address)
 
             dbg(`%%% ev.sellToken === ${knc.address}`)
             dbg(`%%% ev.buyToken === ${weth.address}`)
             dbg(`%%% ev.auctionIndex.eq(${auctionIndex})`)
             dbg(`%%% ev.buyTokenAmount.eq(${buyTokenAmount})`)
             dbg(`%%% ev.clearedAuction == true`)
-            truffleAssert.eventEmitted(tx, 'BoughtInAuction', (ev) => {
+            truffleAssert.eventEmitted(res, 'BoughtInAuction', (ev) => {
                 return (
                     ev.sellToken === knc.address
                     && ev.buyToken === weth.address
@@ -1919,9 +1919,9 @@ contract("DxMarketMaker", async accounts => {
                 knc.address,
                 weth.address
             )
-            const tx = await dxmm.triggerAuction(knc.address, weth.address)
+            const res = await dxmm.triggerAuction(knc.address, weth.address)
 
-            truffleAssert.eventEmitted(tx, 'AuctionTriggered', (ev) => {
+            truffleAssert.eventEmitted(res, 'AuctionTriggered', (ev) => {
                 return (
                     ev.sellToken === knc.address
                     && ev.buyToken === weth.address
@@ -1967,9 +1967,9 @@ contract("DxMarketMaker", async accounts => {
             const knc = await deployTokenAddToDxAndClearFirstAuction()
             await fundDxmmAndDepositToDxToken(knc)
 
-            const tx = await dxmm.magic(knc.address, weth.address)
+            const res = await dxmm.magic(knc.address, weth.address)
 
-            truffleAssert.eventEmitted(tx, 'AuctionTriggered', (ev) => {
+            truffleAssert.eventEmitted(res, 'AuctionTriggered', (ev) => {
                 return (
                     ev.sellToken === knc.address
                     && ev.buyToken === weth.address
@@ -1986,9 +1986,9 @@ contract("DxMarketMaker", async accounts => {
             await dxmmTriggerAndClearAuction(knc, weth)
             await dxmmTriggerAndClearAuction(knc, weth)
 
-            const tx = await dxmm.magic(knc.address, weth.address)
+            const res = await dxmm.magic(knc.address, weth.address)
 
-            truffleAssert.eventEmitted(tx, 'ClaimedAuctionTokens', (ev) => {
+            truffleAssert.eventEmitted(res, 'ClaimedAuctionTokens', (ev) => {
                 return (
                     ev.sellToken === knc.address
                     && ev.buyToken === weth.address
@@ -2013,12 +2013,12 @@ contract("DxMarketMaker", async accounts => {
             await fundDxmmAndDepositToDxToken(knc)
             await dxmm.triggerAuction(knc.address, weth.address)
 
-            const tx = await dxmm.magic(knc.address, weth.address)
+            const res = await dxmm.magic(knc.address, weth.address)
 
             // TODO: check that NO EVENT AT ALL has been emitted
-            truffleAssert.eventNotEmitted(tx, 'ClaimedAuctionTokens')
-            truffleAssert.eventNotEmitted(tx, 'AuctionTriggered')
-            truffleAssert.eventNotEmitted(tx, 'BoughtInAuction')
+            truffleAssert.eventNotEmitted(res, 'ClaimedAuctionTokens')
+            truffleAssert.eventNotEmitted(res, 'AuctionTriggered')
+            truffleAssert.eventNotEmitted(res, 'BoughtInAuction')
         })
 
         it("auction in progress but price not ready for buying, waiting - nothing to do", async () => {
@@ -2055,12 +2055,12 @@ contract("DxMarketMaker", async accounts => {
             const priceReachedKyber = await hasDxPriceReachedKyber(knc, weth, auctionIndex)
             priceReachedKyber.should.be.false
 
-            const tx = await dxmm.magic(knc.address, weth.address)
+            const res = await dxmm.magic(knc.address, weth.address)
 
             // TODO: check that NO EVENT AT ALL has been emitted
-            truffleAssert.eventNotEmitted(tx, 'ClaimedAuctionTokens')
-            truffleAssert.eventNotEmitted(tx, 'AuctionTriggered')
-            truffleAssert.eventNotEmitted(tx, 'BoughtInAuction')
+            truffleAssert.eventNotEmitted(res, 'ClaimedAuctionTokens')
+            truffleAssert.eventNotEmitted(res, 'AuctionTriggered')
+            truffleAssert.eventNotEmitted(res, 'BoughtInAuction')
         })
 
         it("auction in progress, price ready for buying -> should buy", async () => {
@@ -2085,7 +2085,7 @@ contract("DxMarketMaker", async accounts => {
             actionRequired.should.be.true
         })
 
-        it.only("auction in progress, price ready for buying -> bought and cleared auction", async () => {
+        it("auction in progress, price ready for buying -> bought and cleared auction", async () => {
             const knc = await deployTokenAddToDxAndClearFirstAuction()
             await fundDxmmAndDepositToDxToken(knc)
             await dxmm.triggerAuction(knc.address, weth.address)
@@ -2104,16 +2104,21 @@ contract("DxMarketMaker", async accounts => {
 
             await fundDxmmAndDepositToDxWethForAuction(knc, weth, auctionIndex)
 
-            const tx = await dxmm.magic(knc.address, weth.address)
+            const res = await dxmm.magic(knc.address, weth.address)
 
-            truffleAssert.eventEmitted(tx, 'BoughtInAuction', (ev) => {
+            truffleAssert.eventEmitted(res, 'BoughtInAuction', (ev) => {
                 return (
                     ev.sellToken === knc.address
                     && ev.buyToken === weth.address
                     && auctionIndex === auctionIndex
                 )
             })
+
+            const state = await dxmm.getAuctionState(knc.address, weth.address)
+            state.should.be.eq.BN(NO_AUCTION_TRIGGERED)
         })
+
+        it("several cycles")
 
         it("does dxmm have sufficient funds? (token and weth)")
     })

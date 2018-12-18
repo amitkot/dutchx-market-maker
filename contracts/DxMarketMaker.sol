@@ -48,13 +48,12 @@ contract DxMarketMaker is Withdrawable {
     // Token => Token => auctionIndex
     mapping (address => mapping (address => uint)) public lastClaimedAuction;
 
-    constructor(address _dx, address _weth, address _kyberNetworkProxy) public {
+    constructor(address _dx, address _kyberNetworkProxy) public {
         require(address(_dx) != address(0));
-        require(address(_weth) != address(0));
         require(address(_kyberNetworkProxy) != address(0));
 
         dx = DutchExchange(_dx);
-        weth = EtherToken(_weth);
+        weth = EtherToken(dx.ethToken());
         kyberNetworkProxy = KyberNetworkProxy(_kyberNetworkProxy);
     }
 
