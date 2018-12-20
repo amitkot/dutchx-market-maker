@@ -547,16 +547,11 @@ contract("DxMarketMaker", async accounts => {
 
     it("reject creating dxmm with DutchExchange address 0", async () => {
         try {
-            await DxMarketMaker.new(0, weth.address, await dxmm.kyberNetworkProxy())
+            await DxMarketMaker.new(
+                '0x0000000000000000000000000000000000000000',
+                await dxmm.kyberNetworkProxy()
+            )
             assert(false, "throw was expected in line above.")
-        } catch (e) {
-            assert(Helper.isRevertErrorMessage(e), "expected revert but got: " + e)
-        }
-    })
-
-    it("reject creating dxmm with WETH address 0", async () => {
-        try {
-            await DxMarketMaker.new(dx.address, 0, await dxmm.kyberNetworkProxy())
         } catch (e) {
             assert(Helper.isRevertErrorMessage(e), "expected revert but got: " + e)
         }
@@ -564,7 +559,10 @@ contract("DxMarketMaker", async accounts => {
 
     it("reject creating dxmm with KyberNetworkProxy address 0", async () => {
         try {
-            await DxMarketMaker.new(dx.address, weth.address, 0)
+            await DxMarketMaker.new(
+                dx.address,
+                '0x0000000000000000000000000000000000000000'
+            )
         } catch (e) {
             assert(Helper.isRevertErrorMessage(e), "expected revert but got: " + e)
         }
@@ -1197,7 +1195,7 @@ contract("DxMarketMaker", async accounts => {
                 knc.address,
                 weth.address,
                 auctionIndex,
-                calculatedBuyTokens - 1 /* amount */
+                calculatedBuyTokens.subn(1) /* amount */
             )
 
             willClearAuction.should.be.false
@@ -1933,7 +1931,7 @@ contract("DxMarketMaker", async accounts => {
         })
     })
 
-    describe.only("unified flow", () => {
+    describe("unified flow", () => {
         const hasDxPriceReachedKyber = async (sellToken, buyToken, auctionIndex) => {
             // dutchX price should initially be higher than kyber price
             const amount = await dxmm.calculateAuctionBuyTokens(
