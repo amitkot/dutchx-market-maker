@@ -34,13 +34,10 @@ if (process.env.LOGGLY_TOKEN && process.env.LOGGLY_SUBDOMAIN) {
 const MNEMONIC = process.env.MNEMONIC
 const PRIVATE = process.env.PRIVATE
 
-const SLEEP_TIME = process.env.SLEEP_TIME || 10000
+const DXMM_ADDRESS = process.env.DXMM_ADDRESS
+const SELL_TOKEN_ADDRESS = process.env.SELL_TOKEN_ADDRESS
 
-// TODO: move to .env
-// Kovan
-// const DXMM_ADDRESS = '0x4Dea0d19bD0A8181aa27C9921A24524569Ecd5C6'
-const DXMM_ADDRESS = '0x5017A545b09ab9a30499DE7F431DF0855bCb7275'
-const KNC_ADDRESS = '0xA586074FA4Fe3E546A132a16238abe37951D41fE'
+const SLEEP_TIME = process.env.SLEEP_TIME || 10000
 
 // TODO: Compile the contracts or use these?
 const ERC20_COMPILED = 'build/contracts/ERC20.json'
@@ -62,7 +59,7 @@ const priceStr = ({ num, den }, decimals = 10) => {
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 // XXX: only for development
-async function waitTimeInSeconds(seconds) {
+async function devNetworkWaitTimeInSeconds(seconds) {
   const sendPromise = (method, params) => {
     return new Promise(function(fulfill, reject) {
       web3.currentProvider.send(
@@ -119,16 +116,11 @@ const _getNetworkURL = net => {
   }
 }
 
-const _printThings = async (web3, gasPriceGwei) => {
+const _runMarketMaker = async (web3, gasPriceGwei) => {
   const account = (await web3.eth.getAccounts())[0]
   logger.info(`Running from account: ${account}`)
 
-  const _loadContract = (abiFilename, address) => {
-    const abiFile = fs.readFileSync(abiFilename, { encoding: 'utf-8' })
-    const abi = JSON.parse(abiFile)['abi']
-    return new web3.eth.Contract(abi, address)
-  }
-
+  // Signs and sends transactions.
   const sendTx = async (txObject, value) => {
     logger.debug('Preparing transaction')
     const gasPrice = web3.utils
@@ -176,16 +168,19 @@ const _printThings = async (web3, gasPriceGwei) => {
     return receipt
   }
 
+  // Loads the contracts that the bot interacts with
   const _loadContracts = async () => {
+    const _loadContract = (abiFilename, address) => {
+      const abiFile = fs.readFileSync(abiFilename, { encoding: 'utf-8' })
+      const abi = JSON.parse(abiFile)['abi']
+      return new web3.eth.Contract(abi, address)
+    }
+
     logger.verbose('loading contracts')
-    // const dxmm = _loadContract(DXMM_COMPILED, DXMM_ADDRESS)
-    // const knc = _loadContract(ERC20_COMPILED, KNC_ADDRESS)
-    // const weth = _loadContract(WETH_COMPILED, await dxmm.methods.weth().call())
-    // const dx = _loadContract(DX_COMPILED, await dxmm.methods.dx().call())
     const dxmm = _loadContract(DXMM_COMPILED, DXMM_ADDRESS)
     const contracts = {
       dxmm: dxmm,
-      knc: _loadContract(ERC20_COMPILED, KNC_ADDRESS),
+      sellToken: _loadContract(ERC20_COMPILED, SELL_TOKEN_ADDRESS),
       weth: _loadContract(WETH_COMPILED, await dxmm.methods.weth().call()),
       dx: _loadContract(DX_COMPILED, await dxmm.methods.dx().call())
     }
@@ -194,8 +189,9 @@ const _printThings = async (web3, gasPriceGwei) => {
     })
     return contracts
   }
-  const { dxmm, knc, weth, dx } = await _loadContracts()
+  const { dxmm, sellToken, weth: buyToken, dx } = await _loadContracts()
 
+  // Setting up useful data from the dxmm contract.
   const auctionState = {}
   auctionState[await dxmm.methods.NO_AUCTION_TRIGGERED().call()] =
     'NO_AUCTION_TRIGGERED'
@@ -205,50 +201,57 @@ const _printThings = async (web3, gasPriceGwei) => {
     'AUCTION_IN_PROGRESS'
 
   const verifyHasEnoughTokens = async (sellToken, buyToken) => {
-    logger.info('Checking dxmm has enough tokens')
+    logger.info('Checking dxmm has enough sell tokens')
     const missingTokens = await dxmm.methods
       .calculateMissingTokenForAuctionStart(
         sellToken.options.address,
         buyToken.options.address
       )
       .call()
-    logger.verbose(`Missing KNC tokens to start auction: ${missingTokens}`)
+    logger.verbose(`Missing sell tokens to start auction: ${missingTokens}`)
 
     const missingTokensWithFee = await dxmm.methods.addFee(missingTokens).call()
-    logger.verbose(`Missing KNC tokens with fee: ${missingTokensWithFee}`)
+    logger.verbose(`Missing tokens with fee: ${missingTokensWithFee}`)
 
     const balance = await dx.methods
-      .balances(knc.options.address, dxmm.options.address)
+      .balances(sellToken.options.address, dxmm.options.address)
       .call()
-    logger.verbose(`KNC balance on DX: ${balance} `)
+    logger.verbose(`Sell token balance on DX: ${balance} `)
 
     const missingOnDx = web3.utils
       .toBN(missingTokensWithFee)
       .sub(web3.utils.toBN(balance))
-    logger.verbose(`KNC missing from DX balance: ${missingOnDx} `)
 
     if (missingOnDx > 0) {
-      logger.info(`Missing KNC on DX: ${missingOnDx}, depositing...`)
-
-      const tokenBalance = await knc.methods
-        .balanceOf(dxmm.options.address)
-        .call()
-      logger.debug(`KNC.balanceOf(dxmm) = ${tokenBalance}`)
-
-      if (tokenBalance < missingOnDx) {
-        logger.verbose('Transfering KNC to dxmm')
-        await sendTx(
-          knc.methods.transfer(dxmm.options.address, missingTokensWithFee)
-        )
-      }
-
-      logger.verbose('dxmm.depositToDx()')
-      await sendTx(
-        dxmm.methods.depositToDx(
-          sellToken.options.address,
-          missingTokensWithFee
-        )
+      logger.error(`Sell token missing from DX balance: ${missingOnDx} `)
+      logger.error(
+        'Steps to fix:\n' +
+          '(1) sellToken.transfer(dxmm.address, tokenAmount)\n' +
+          '(2) dxmm.depositToDx(sellToken, tokenAmount)'
       )
+      process.exit(1)
+
+      // logger.info(`Missing sell token on DX: ${missingOnDx}, depositing...`)
+      //
+      // const tokenBalance = await sellToken.methods
+      //   .balanceOf(dxmm.options.address)
+      //   .call()
+      // logger.debug(`KNC.balanceOf(dxmm) = ${tokenBalance}`)
+      //
+      // if (tokenBalance < missingOnDx) {
+      //   logger.verbose('Transfering KNC to dxmm')
+      //   await sendTx(
+      //     sellToken.methods.transfer(dxmm.options.address, missingTokensWithFee)
+      //   )
+      // }
+      //
+      // logger.verbose('dxmm.depositToDx()')
+      // await sendTx(
+      //   dxmm.methods.depositToDx(
+      //     sellToken.options.address,
+      //     missingTokensWithFee
+      //   )
+      // )
     }
   }
 
@@ -274,26 +277,38 @@ const _printThings = async (web3, gasPriceGwei) => {
       .call()
     logger.verbose(`dxmm balance of WETH on dx: ${dxWethBalance}`)
 
-    // TODO: maybe act only if got specific flag from user
-    if (dxWethBalance < requiredBuyTokens) {
-      logger.info('Sending WETH to dxmm balance on dx')
+    const missing = web3.utils
+      .toBN(requiredBuyTokens)
+      .sub(web3.utils.toBN(dxWethBalance))
 
-      logger.verbose('Deposit WETH -> WETH')
-      await sendTx(buyToken.methods.deposit(), requiredBuyTokens /* value */)
-
-      logger.verbose('Transfer WETH to dxmm')
-      await sendTx(
-        buyToken.methods.transfer(dxmm.options.address, requiredBuyTokens)
+    if (missing > 0) {
+      logger.error(`WETH missing from DX balance: ${missing} `)
+      logger.error(
+        'Steps to fix:\n' +
+          '(1) weth.deposit(amount)\n' +
+          '(2) weth.transfer(dxmm.address, amount)\n' +
+          '(3) dxmm.depositToDx(weth.address, amount)'
       )
+      process.exit(1)
 
-      logger.verbose('Deposit to dx')
-      await sendTx(
-        dxmm.methods.depositToDx(buyToken.options.address, requiredBuyTokens)
-      )
+      // logger.info('Sending WETH to dxmm balance on dx')
+      //
+      // logger.verbose('Deposit WETH -> WETH')
+      // await sendTx(buyToken.methods.deposit(), requiredBuyTokens /* value */)
+      //
+      // logger.verbose('Transfer WETH to dxmm')
+      // await sendTx(
+      //   buyToken.methods.transfer(dxmm.options.address, requiredBuyTokens)
+      // )
+      //
+      // logger.verbose('Deposit to dx')
+      // await sendTx(
+      //   dxmm.methods.depositToDx(buyToken.options.address, requiredBuyTokens)
+      // )
     }
   }
 
-  const _prepareStatus = async shouldAct => {
+  const _prepareStatus = async (sellToken, buyToken, shouldAct) => {
     const state = await dxmm.methods
       .getAuctionState(sellToken.options.address, buyToken.options.address)
       .call()
@@ -336,10 +351,6 @@ const _printThings = async (web3, gasPriceGwei) => {
   // ------------------------------------------------
   //                  FLOW START
   // ------------------------------------------------
-
-  const sellToken = knc
-  const buyToken = weth
-
   let state = await dxmm.methods
     .getAuctionState(sellToken.options.address, buyToken.options.address)
     .call()
@@ -359,7 +370,7 @@ const _printThings = async (web3, gasPriceGwei) => {
       .magic(sellToken.options.address, buyToken.options.address)
       .call()
 
-    logger.verbose(await _prepareStatus(shouldAct))
+    logger.verbose(await _prepareStatus(sellToken, buyToken, shouldAct))
 
     if (shouldAct) {
       await sendTx(
@@ -384,17 +395,16 @@ const _printThings = async (web3, gasPriceGwei) => {
     await sleep(SLEEP_TIME)
 
     // XXX: only in development
-    // await waitTimeInSeconds(SLEEP_TIME / 1000)
     // XXX: making things go fast
-    await waitTimeInSeconds(5 * 60)
+    await devNetworkWaitTimeInSeconds(5 * 60)
   }
 }
 
-const run = async (network, gasPriceGwei) => {
+const runWithWeb3 = async (network, whatToRun) => {
   const provider = _getProvider(network, _getNetworkURL(network))
   web3.setProvider(provider)
 
-  await _printThings(web3, gasPriceGwei)
+  await whatToRun(web3)
 
   // Cleanup
   provider.engine.stop()
@@ -422,7 +432,9 @@ yargs
         })
     },
     async function(argv) {
-      await run(argv.net, argv.gasPriceGwei)
+      await runWithWeb3(argv.net, web3 => {
+        _runMarketMaker(web3, argv.gasPriceGwei)
+      })
     }
   )
   .help().argv
