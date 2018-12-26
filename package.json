@@ -30,12 +30,25 @@
     "truffle-contract": "^3.0.6",
     "truffle-hdwallet-provider": "^1.0.0-web3one.2",
     "web3": "^1.0.0-beta.34",
+    "winston": "^3.1.0",
+    "winston-loggly-bulk": "git+https://github.com/loggly/winston-loggly-bulk.git",
     "yargs": "^11.1.0"
   },
   "devDependencies": {
     "bn-chai": "^1.0.1",
     "chai": "^4.1.2",
     "chai-as-promised": "^7.1.1",
+    "eslint": "^5.11.0",
+    "eslint-config-prettier": "^3.3.0",
+    "eslint-config-prettier-standard": "^2.0.0",
+    "eslint-config-standard": "^12.0.0",
+    "eslint-plugin-import": "^2.14.0",
+    "eslint-plugin-node": "^8.0.0",
+    "eslint-plugin-prettier": "^3.0.0",
+    "eslint-plugin-promise": "^4.0.1",
+    "eslint-plugin-standard": "^4.0.0",
+    "prettier": "^1.15.3",
+    "prettier-standard": "^8.0.1",
     "truffle-assertions": "^0.6.3"
   }
 }
