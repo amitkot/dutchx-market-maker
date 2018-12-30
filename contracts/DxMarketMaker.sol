@@ -414,6 +414,10 @@ contract DxMarketMaker is Withdrawable {
         public
         returns (bool)
     {
+        // Deposit all token balance to DutchX.
+        depositToDx(sellToken, ERC20(sellToken).balanceOf(address(this)));
+        depositToDx(buyToken, ERC20(buyToken).balanceOf(address(this)));
+
         AuctionState state = getAuctionState(sellToken, buyToken);
 
         if (state == AuctionState.AUCTION_TRIGGERED_WAITING) {

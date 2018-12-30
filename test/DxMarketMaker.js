@@ -495,7 +495,9 @@ contract('DxMarketMaker', async accounts => {
 
   const fundDxmmAndDepositToDxToken = async token => {
     const amount = web3.utils.toWei('100000000')
-    dbg(`Funding dxmm with ${amount} WETH and depositing to DX`)
+    dbg(
+      `Funding dxmm with ${amount} ${await token.symbol.call()} and depositing to DX`
+    )
     await token.transfer(dxmm.address, amount, { from: admin })
     await dxmm.depositToDx(token.address, amount, { from: admin })
   }
@@ -539,7 +541,6 @@ contract('DxMarketMaker', async accounts => {
     DX_AUCTION_START_WAITING_FOR_FUNDING = await dxmm.DX_AUCTION_START_WAITING_FOR_FUNDING()
   })
 
-  // it.only('admin should deploy token, add to dx, and conclude the first auction', async () => {
   it('admin should deploy token, add to dx, and conclude the first auction', async () => {
     const knc = await deployTokenAddToDxAndClearFirstAuction()
 
@@ -2323,6 +2324,28 @@ contract('DxMarketMaker', async accounts => {
 
       const state = await dxmm.getAuctionState(knc.address, weth.address)
       state.should.be.eq.BN(NO_AUCTION_TRIGGERED)
+    })
+
+    it('deposits all token balance to dx', async () => {
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+      await fundDxmmAndDepositToDxToken(knc)
+
+      const amount = web3.utils.toWei(new BN(10).pow(new BN(6)))
+
+      // transfer KNC
+      await knc.transfer(dxmm.address, amount, { from: admin })
+
+      // transfer WETH
+      await weth.deposit({ value: amount, from: admin })
+      await weth.transfer(dxmm.address, amount, { from: admin })
+
+      await dxmm.magic(knc.address, weth.address)
+
+      const wethBalance = await weth.balanceOf(dxmm.address)
+      wethBalance.should.be.eq.BN(0)
+      const kncBalance = await knc.balanceOf(dxmm.address)
+      kncBalance.should.be.eq.BN(0)
     })
 
     it('several cycles')
