@@ -22,7 +22,7 @@ interface DxPriceOracleInterface {
 // TODO: add events for logging calculations and decisions
 // TODO: add fail texts to require calls
 // TODO: add support to token -> token
-contract DxMarketMaker is Withdrawable {
+contract KyberDxMarketMaker is Withdrawable {
     // This is the representation of ETH as an ERC20 Token for Kyber Network.
     ERC20 constant internal KYBER_ETH_TOKEN = ERC20(
         0x00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee

@@ -27,7 +27,7 @@ const truffleAssert = require('truffle-assertions')
 
 const DutchExchange = artifacts.require('DutchExchange')
 const PriceOracleInterface = artifacts.require('PriceOracleInterface')
-const DxMarketMaker = artifacts.require('DxMarketMaker')
+const KyberDxMarketMaker = artifacts.require('KyberDxMarketMaker')
 const TestToken = artifacts.require('TestToken')
 const EtherToken = artifacts.require('EtherToken')
 const MockKyberNetworkProxy = artifacts.require('MockKyberNetworkProxy')
@@ -51,7 +51,7 @@ let AUCTION_TRIGGERED_WAITING
 let AUCTION_IN_PROGRESS
 let DX_AUCTION_START_WAITING_FOR_FUNDING
 
-contract('DxMarketMaker', async accounts => {
+contract('KyberDxMarketMaker', async accounts => {
   const deployToken = async () => {
     const token = await TestToken.new(
       'Some Token',
@@ -529,7 +529,7 @@ contract('DxMarketMaker', async accounts => {
     operator = accounts[4]
 
     weth = await EtherToken.deployed()
-    dxmm = await DxMarketMaker.deployed()
+    dxmm = await KyberDxMarketMaker.deployed()
     dx = await DutchExchange.at(await dxmm.dx())
 
     await dxmm.addOperator(operator, { from: admin })
@@ -631,7 +631,7 @@ contract('DxMarketMaker', async accounts => {
 
   it('reject creating dxmm with DutchExchange address 0', async () => {
     try {
-      await DxMarketMaker.new(
+      await KyberDxMarketMaker.new(
         '0x0000000000000000000000000000000000000000',
         await dxmm.kyberNetworkProxy()
       )
@@ -643,7 +643,7 @@ contract('DxMarketMaker', async accounts => {
 
   it('reject creating dxmm with KyberNetworkProxy address 0', async () => {
     try {
-      await DxMarketMaker.new(
+      await KyberDxMarketMaker.new(
         dx.address,
         '0x0000000000000000000000000000000000000000'
       )
