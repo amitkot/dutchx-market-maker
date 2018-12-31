@@ -1,4 +1,4 @@
-pragma solidity ^0.4.23;
+pragma solidity ^0.4.24;
 
 import "./ERC20Interface.sol";
 import "./Withdrawable.sol";
@@ -37,6 +37,7 @@ contract DxMarketMaker is Withdrawable {
         AUCTION_IN_PROGRESS
     }
 
+    // Exposing the enum values to external tools.
     AuctionState constant public NO_AUCTION_TRIGGERED = AuctionState.NO_AUCTION_TRIGGERED;
     AuctionState constant public AUCTION_TRIGGERED_WAITING = AuctionState.AUCTION_TRIGGERED_WAITING;
     AuctionState constant public AUCTION_IN_PROGRESS = AuctionState.AUCTION_IN_PROGRESS;
