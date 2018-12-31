@@ -49,7 +49,10 @@ contract KyberDxMarketMaker is Withdrawable {
     // Token => Token => auctionIndex
     mapping (address => mapping (address => uint)) public lastClaimedAuction;
 
-    constructor(address _dx, address _kyberNetworkProxy) public {
+    constructor(
+        DutchExchange _dx,
+        KyberNetworkProxy _kyberNetworkProxy
+    ) public {
         require(address(_dx) != address(0));
         require(address(_kyberNetworkProxy) != address(0));
 
@@ -59,7 +62,7 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     // TODO: emit event
-    function depositToDx(address token, uint amount)
+    function depositToDx(ERC20 token, uint amount)
         public
         onlyAdmin
         returns (uint)
@@ -69,7 +72,7 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     // TODO: emit event
-    function withdrawFromDx(address token, uint amount)
+    function withdrawFromDx(ERC20 token, uint amount)
         public
         onlyAdmin
         returns (uint)
@@ -78,7 +81,7 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     // TODO: consider adding a "safety margin" to compensate for accuracy issues.
-    function thresholdNewAuctionToken(address token)
+    function thresholdNewAuctionToken(ERC20 token)
         public
         view
         returns (uint num)
@@ -106,8 +109,8 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     function calculateMissingTokenForAuctionStart(
-        address sellToken,
-        address buyToken
+        ERC20 sellToken,
+        ERC20 buyToken
     )
         public
         view
@@ -136,8 +139,8 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     function getAuctionState(
-        address sellToken,
-        address buyToken
+        ERC20 sellToken,
+        ERC20 buyToken
     )
         public
         view
@@ -157,13 +160,13 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     // TODO: support token -> token
-    function getKyberRate(address _sellToken, address _buyToken, uint amount)
+    function getKyberRate(ERC20 _sellToken, ERC20 _buyToken, uint amount)
         public
         view
         returns (uint num, uint den)
     {
-        ERC20 sellToken = _sellToken == address(weth) ? KYBER_ETH_TOKEN : ERC20(_sellToken);
-        ERC20 buyToken = _buyToken == address(weth) ? KYBER_ETH_TOKEN : ERC20(_buyToken);
+        ERC20 sellToken = address(_sellToken) == address(weth) ? KYBER_ETH_TOKEN : _sellToken;
+        ERC20 buyToken = address(_buyToken) == address(weth) ? KYBER_ETH_TOKEN : _buyToken;
         uint rate;
         (rate, ) = kyberNetworkProxy.getExpectedRate(
             sellToken,
@@ -177,8 +180,8 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     function tokensSoldInCurrentAuction(
-        address sellToken,
-        address buyToken,
+        ERC20 sellToken,
+        ERC20 buyToken,
         uint auctionIndex,
         address account
     )
@@ -192,8 +195,8 @@ contract KyberDxMarketMaker is Withdrawable {
     // The amount of tokens that matches the amount sold by provided account in
     // specified auction index, deducting the amount that was already bought.
     function calculateAuctionBuyTokens(
-        address sellToken,
-        address buyToken,
+        ERC20 sellToken,
+        ERC20 buyToken,
         uint auctionIndex,
         address account
     )
@@ -224,8 +227,8 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     event ClaimedAuctionTokens(
-        address indexed sellToken,
-        address indexed buyToken,
+        ERC20 indexed sellToken,
+        ERC20 indexed buyToken,
         uint previousLastCompletedAuction,
         uint newLastCompletedAuction,
         uint sellerFunds,
@@ -233,8 +236,8 @@ contract KyberDxMarketMaker is Withdrawable {
     );
 
     function claimAuctionTokens(
-        address sellToken,
-        address buyToken
+        ERC20 sellToken,
+        ERC20 buyToken
     )
         public
         returns (uint sellerFunds, uint buyerFunds)
@@ -268,8 +271,8 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     event AuctionTriggered(
-        address indexed sellToken,
-        address indexed buyToken,
+        ERC20 indexed sellToken,
+        ERC20 indexed buyToken,
         uint indexed auctionIndex,
         uint sellTokenAmount,
         uint sellTokenAmountWithFee
@@ -277,8 +280,8 @@ contract KyberDxMarketMaker is Withdrawable {
 
     // TODO: maybe verify that pair is listed in dutchx
     function triggerAuction(
-        address sellToken,
-        address buyToken
+        ERC20 sellToken,
+        ERC20 buyToken
     )
         public
         returns (bool triggered)
@@ -312,16 +315,16 @@ contract KyberDxMarketMaker is Withdrawable {
     // TODO: emit event
     // TODO: check for all the requirements of dutchx
     event BoughtInAuction(
-        address indexed sellToken,
-        address indexed buyToken,
+        ERC20 indexed sellToken,
+        ERC20 indexed buyToken,
         uint auctionIndex,
         uint buyTokenAmount,
         bool clearedAuction
     );
 
     function buyInAuction(
-        address sellToken,
-        address buyToken
+        ERC20 sellToken,
+        ERC20 buyToken
     )
         public
         returns (bool bought)
@@ -366,8 +369,8 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     function willAmountClearAuction(
-        address sellToken,
-        address buyToken,
+        ERC20 sellToken,
+        ERC20 buyToken,
         uint auctionIndex,
         uint amount
     )
@@ -408,7 +411,7 @@ contract KyberDxMarketMaker is Withdrawable {
         return amount >= outstandingVolume;
     }
 
-    function depositAllBalance(address token) public returns (uint amount) {
+    function depositAllBalance(ERC20 token) public returns (uint amount) {
         uint balance = ERC20(token).balanceOf(address(this));
         if (balance > 0) {
             amount = depositToDx(token, balance);
@@ -416,8 +419,8 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     function magic(
-        address sellToken,
-        address buyToken
+        ERC20 sellToken,
+        ERC20 buyToken
     )
         public
         returns (bool)
