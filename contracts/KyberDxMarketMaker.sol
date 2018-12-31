@@ -62,7 +62,10 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     // TODO: emit event
-    function depositToDx(ERC20 token, uint amount)
+    function depositToDx(
+        ERC20 token,
+        uint amount
+    )
         public
         onlyAdmin
         returns (uint)
@@ -72,158 +75,15 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     // TODO: emit event
-    function withdrawFromDx(ERC20 token, uint amount)
+    function withdrawFromDx(
+        ERC20 token,
+        uint amount
+    )
         public
         onlyAdmin
         returns (uint)
     {
         return dx.withdraw(token, amount);
-    }
-
-    // TODO: consider adding a "safety margin" to compensate for accuracy issues.
-    function thresholdNewAuctionToken(ERC20 token)
-        public
-        view
-        returns (uint num)
-    {
-        uint priceTokenNum;
-        uint priceTokenDen;
-        (priceTokenNum, priceTokenDen) = dx.getPriceOfTokenInLastAuction(token);
-
-        DxPriceOracleInterface priceOracle = DxPriceOracleInterface(
-            dx.ethUSDOracle()
-        );
-
-        // Rounding up to make sure we pass the threshold
-        return 1 + div(
-            // mul() takes care of overflows
-            mul(
-                dx.thresholdNewAuction(),
-                priceTokenDen
-            ),
-            mul(
-                priceOracle.getUSDETHPrice(),
-                priceTokenNum
-            )
-        );
-    }
-
-    function calculateMissingTokenForAuctionStart(
-        ERC20 sellToken,
-        ERC20 buyToken
-    )
-        public
-        view
-        returns (uint)
-    {
-        uint currentAuctionSellVolume = dx.sellVolumesCurrent(sellToken, buyToken);
-        uint thresholdTokenWei = thresholdNewAuctionToken(sellToken);
-
-        if (thresholdTokenWei > currentAuctionSellVolume) {
-            return thresholdTokenWei - currentAuctionSellVolume;
-        }
-
-        return 0;
-    }
-
-    function addFee(uint amount) public view returns (uint) {
-        uint num;
-        uint den;
-        (num, den) = dx.getFeeRatio(msg.sender);
-
-        // amount / (1 - num / den)
-        return div(
-            mul(amount, den),
-            (den - num)
-        );
-    }
-
-    function getAuctionState(
-        ERC20 sellToken,
-        ERC20 buyToken
-    )
-        public
-        view
-        returns (AuctionState)
-    {
-        uint auctionStart = dx.getAuctionStart(sellToken, buyToken);
-        if (auctionStart > DX_AUCTION_START_WAITING_FOR_FUNDING) {
-            // DutchExchange logic uses auction start time.
-            /* solhint-disable not-rely-on-time */
-            if (auctionStart > now) {
-                return AuctionState.AUCTION_TRIGGERED_WAITING;
-            } else {
-                return AuctionState.AUCTION_IN_PROGRESS;
-            }
-        }
-        return AuctionState.NO_AUCTION_TRIGGERED;
-    }
-
-    // TODO: support token -> token
-    function getKyberRate(ERC20 _sellToken, ERC20 _buyToken, uint amount)
-        public
-        view
-        returns (uint num, uint den)
-    {
-        ERC20 sellToken = address(_sellToken) == address(weth) ? KYBER_ETH_TOKEN : _sellToken;
-        ERC20 buyToken = address(_buyToken) == address(weth) ? KYBER_ETH_TOKEN : _buyToken;
-        uint rate;
-        (rate, ) = kyberNetworkProxy.getExpectedRate(
-            sellToken,
-            buyToken,
-            amount
-        );
-
-        // KyberNetworkProxy.getExpectedRate() always returns a result that is
-        // rate / 10**18.
-        return (rate, 10 ** 18);
-    }
-
-    function tokensSoldInCurrentAuction(
-        ERC20 sellToken,
-        ERC20 buyToken,
-        uint auctionIndex,
-        address account
-    )
-        public
-        view
-        returns (uint)
-    {
-        return dx.sellerBalances(sellToken, buyToken, auctionIndex, account);
-    }
-
-    // The amount of tokens that matches the amount sold by provided account in
-    // specified auction index, deducting the amount that was already bought.
-    function calculateAuctionBuyTokens(
-        ERC20 sellToken,
-        ERC20 buyToken,
-        uint auctionIndex,
-        address account
-    )
-        public
-        view
-        returns (uint)
-    {
-        uint sellVolume = tokensSoldInCurrentAuction(
-            sellToken,
-            buyToken,
-            auctionIndex,
-            account
-        );
-        uint buyVolume = dx.buyVolumes(sellToken, buyToken);
-
-        uint num;
-        uint den;
-        (num, den) = dx.getCurrentAuctionPrice(
-            sellToken,
-            buyToken,
-            auctionIndex
-        );
-
-        // No price for this auction, it is a future one.
-        if (den == 0) return 0;
-
-        return mul(sellVolume, num) / den - buyVolume;
     }
 
     event ClaimedAuctionTokens(
@@ -368,50 +228,12 @@ contract KyberDxMarketMaker is Withdrawable {
         return true;
     }
 
-    function willAmountClearAuction(
-        ERC20 sellToken,
-        ERC20 buyToken,
-        uint auctionIndex,
-        uint amount
+    function depositAllBalance(
+        ERC20 token
     )
         public
-        view
-        returns (bool)
+        returns (uint amount)
     {
-        // TODO: add similar requires here and in other places?
-        // R1: auction must not have cleared
-        // require(closingPrices[sellToken][buyToken][auctionIndex].den == 0);
-
-        // uint auctionStart = getAuctionStart(sellToken, buyToken);
-
-        // R2
-        // require(auctionStart <= now);
-
-        // R4
-        // require(auctionIndex == getAuctionIndex(sellToken, buyToken));
-
-        // R5: auction must not be in waiting period
-        // require(auctionStart > AUCTION_START_WAITING_FOR_FUNDING);
-
-        uint buyVolume = dx.buyVolumes(sellToken, buyToken);
-
-        // R7
-        // require(add(buyVolume, amount) < 10 ** 30);
-
-        // Overbuy is when a part of a buy order clears an auction
-        // In that case we only process the part before the overbuy
-        // To calculate overbuy, we first get current price
-        uint sellVolume = dx.sellVolumesCurrent(sellToken, buyToken);
-
-        uint num;
-        uint den;
-        (num, den) = dx.getCurrentAuctionPrice(sellToken, buyToken, auctionIndex);
-        // 10^30 * 10^37 = 10^67
-        uint outstandingVolume = atleastZero(int(mul(sellVolume, num) / den - buyVolume));
-        return amount >= outstandingVolume;
-    }
-
-    function depositAllBalance(ERC20 token) public returns (uint amount) {
         uint balance = ERC20(token).balanceOf(address(this));
         if (balance > 0) {
             amount = depositToDx(token, balance);
@@ -470,8 +292,221 @@ contract KyberDxMarketMaker is Withdrawable {
         require(false, "Unknown auction state");
     }
 
+    function willAmountClearAuction(
+        ERC20 sellToken,
+        ERC20 buyToken,
+        uint auctionIndex,
+        uint amount
+    )
+        public
+        view
+        returns (bool)
+    {
+        // TODO: add similar requires here and in other places?
+        // R1: auction must not have cleared
+        // require(closingPrices[sellToken][buyToken][auctionIndex].den == 0);
+
+        // uint auctionStart = getAuctionStart(sellToken, buyToken);
+
+        // R2
+        // require(auctionStart <= now);
+
+        // R4
+        // require(auctionIndex == getAuctionIndex(sellToken, buyToken));
+
+        // R5: auction must not be in waiting period
+        // require(auctionStart > AUCTION_START_WAITING_FOR_FUNDING);
+
+        uint buyVolume = dx.buyVolumes(sellToken, buyToken);
+
+        // R7
+        // require(add(buyVolume, amount) < 10 ** 30);
+
+        // Overbuy is when a part of a buy order clears an auction
+        // In that case we only process the part before the overbuy
+        // To calculate overbuy, we first get current price
+        uint sellVolume = dx.sellVolumesCurrent(sellToken, buyToken);
+
+        uint num;
+        uint den;
+        (num, den) = dx.getCurrentAuctionPrice(sellToken, buyToken, auctionIndex);
+        // 10^30 * 10^37 = 10^67
+        uint outstandingVolume = atleastZero(int(mul(sellVolume, num) / den - buyVolume));
+        return amount >= outstandingVolume;
+    }
+
+    // TODO: consider adding a "safety margin" to compensate for accuracy issues.
+    function thresholdNewAuctionToken(
+        ERC20 token
+    )
+        public
+        view
+        returns (uint)
+    {
+        uint priceTokenNum;
+        uint priceTokenDen;
+        (priceTokenNum, priceTokenDen) = dx.getPriceOfTokenInLastAuction(token);
+
+        DxPriceOracleInterface priceOracle = DxPriceOracleInterface(
+            dx.ethUSDOracle()
+        );
+
+        // Rounding up to make sure we pass the threshold
+        return 1 + div(
+            // mul() takes care of overflows
+            mul(
+                dx.thresholdNewAuction(),
+                priceTokenDen
+            ),
+            mul(
+                priceOracle.getUSDETHPrice(),
+                priceTokenNum
+            )
+        );
+    }
+
+    function calculateMissingTokenForAuctionStart(
+        ERC20 sellToken,
+        ERC20 buyToken
+    )
+        public
+        view
+        returns (uint)
+    {
+        uint currentAuctionSellVolume = dx.sellVolumesCurrent(sellToken, buyToken);
+        uint thresholdTokenWei = thresholdNewAuctionToken(sellToken);
+
+        if (thresholdTokenWei > currentAuctionSellVolume) {
+            return thresholdTokenWei - currentAuctionSellVolume;
+        }
+
+        return 0;
+    }
+
+    function addFee(
+        uint amount
+    )
+        public
+        view
+        returns (uint)
+    {
+        uint num;
+        uint den;
+        (num, den) = dx.getFeeRatio(msg.sender);
+
+        // amount / (1 - num / den)
+        return div(
+            mul(amount, den),
+            (den - num)
+        );
+    }
+
+    function getAuctionState(
+        ERC20 sellToken,
+        ERC20 buyToken
+    )
+        public
+        view
+        returns (AuctionState)
+    {
+        uint auctionStart = dx.getAuctionStart(sellToken, buyToken);
+        if (auctionStart > DX_AUCTION_START_WAITING_FOR_FUNDING) {
+            // DutchExchange logic uses auction start time.
+            /* solhint-disable not-rely-on-time */
+            if (auctionStart > now) {
+                return AuctionState.AUCTION_TRIGGERED_WAITING;
+            } else {
+                return AuctionState.AUCTION_IN_PROGRESS;
+            }
+        }
+        return AuctionState.NO_AUCTION_TRIGGERED;
+    }
+
+    // TODO: support token -> token
+    function getKyberRate(
+        ERC20 _sellToken,
+        ERC20 _buyToken,
+        uint amount
+    )
+        public
+        view
+        returns (uint num, uint den)
+    {
+        ERC20 sellToken = address(_sellToken) == address(weth) ? KYBER_ETH_TOKEN : _sellToken;
+        ERC20 buyToken = address(_buyToken) == address(weth) ? KYBER_ETH_TOKEN : _buyToken;
+        uint rate;
+        (rate, ) = kyberNetworkProxy.getExpectedRate(
+            sellToken,
+            buyToken,
+            amount
+        );
+
+        // KyberNetworkProxy.getExpectedRate() always returns a result that is
+        // rate / 10**18.
+        return (rate, 10 ** 18);
+    }
+
+    function tokensSoldInCurrentAuction(
+        ERC20 sellToken,
+        ERC20 buyToken,
+        uint auctionIndex,
+        address account
+    )
+        public
+        view
+        returns (uint)
+    {
+        return dx.sellerBalances(sellToken, buyToken, auctionIndex, account);
+    }
+
+    // The amount of tokens that matches the amount sold by provided account in
+    // specified auction index, deducting the amount that was already bought.
+    function calculateAuctionBuyTokens(
+        ERC20 sellToken,
+        ERC20 buyToken,
+        uint auctionIndex,
+        address account
+    )
+        public
+        view
+        returns (uint)
+    {
+        uint sellVolume = tokensSoldInCurrentAuction(
+            sellToken,
+            buyToken,
+            auctionIndex,
+            account
+        );
+        uint buyVolume = dx.buyVolumes(sellToken, buyToken);
+
+        uint num;
+        uint den;
+        (num, den) = dx.getCurrentAuctionPrice(
+            sellToken,
+            buyToken,
+            auctionIndex
+        );
+
+        // No price for this auction, it is a future one.
+        if (den == 0) return 0;
+
+        return mul(sellVolume, num) / den - buyVolume;
+    }
+
     // --- Safe Math functions ---
     // ---------------------------
+    function atleastZero(int a)
+        public
+        pure
+        returns (uint)
+    {
+        if (a < 0) {
+            return 0;
+        } else {
+            return uint(a);
+        }
+    }
+
     /**
     * @dev Multiplies two numbers, reverts on overflow.
     */
@@ -500,17 +535,5 @@ contract KyberDxMarketMaker is Withdrawable {
         // assert(a == b * c + a % b); // There is no case in which this doesn't hold
 
         return c;
-    }
-
-    function atleastZero(int a)
-        public
-        pure
-        returns (uint)
-    {
-        if (a < 0) {
-            return 0;
-        } else {
-            return uint(a);
-        }
     }
 }
