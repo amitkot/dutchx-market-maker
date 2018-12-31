@@ -2326,7 +2326,7 @@ contract('DxMarketMaker', async accounts => {
       state.should.be.eq.BN(NO_AUCTION_TRIGGERED)
     })
 
-    it('deposits all token balance to dx', async () => {
+    it('magic deposits all token balance to dx', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
       await fundDxmmAndDepositToDxToken(knc)
@@ -2351,6 +2351,17 @@ contract('DxMarketMaker', async accounts => {
     it('several cycles')
 
     it('does dxmm have sufficient funds? (token and weth)')
+  })
+
+  it('directly deposit all token balance to dx', async () => {
+    const knc = await deployTokenAddToDxAndClearFirstAuction()
+    const amount = web3.utils.toWei(new BN(10).pow(new BN(6)))
+    await knc.transfer(dxmm.address, amount, { from: admin })
+
+    await dxmm.depositAllBalance(knc.address)
+
+    const kncBalance = await knc.balanceOf(dxmm.address)
+    kncBalance.should.be.eq.BN(0)
   })
 
   it('should start sale only if has enough ETH to end')

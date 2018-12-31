@@ -63,7 +63,7 @@ contract DxMarketMaker is Withdrawable {
         onlyAdmin
         returns (uint)
     {
-        ERC20(token).approve(dx, amount);
+        require(ERC20(token).approve(dx, amount));
         return dx.deposit(token, amount);
     }
 
@@ -161,8 +161,8 @@ contract DxMarketMaker is Withdrawable {
         view
         returns (uint num, uint den)
     {
-        ERC20 sellToken = _sellToken == address(weth) ? KYBER_ETH_TOKEN : ERC20(sellToken);
-        ERC20 buyToken = _buyToken == address(weth) ? KYBER_ETH_TOKEN : ERC20(buyToken);
+        ERC20 sellToken = _sellToken == address(weth) ? KYBER_ETH_TOKEN : ERC20(_sellToken);
+        ERC20 buyToken = _buyToken == address(weth) ? KYBER_ETH_TOKEN : ERC20(_buyToken);
         uint rate;
         (rate, ) = kyberNetworkProxy.getExpectedRate(
             sellToken,
@@ -223,8 +223,8 @@ contract DxMarketMaker is Withdrawable {
     }
 
     event ClaimedAuctionTokens(
-        address sellToken,
-        address buyToken,
+        address indexed sellToken,
+        address indexed buyToken,
         uint previousLastCompletedAuction,
         uint newLastCompletedAuction,
         uint sellerFunds,
@@ -267,9 +267,9 @@ contract DxMarketMaker is Withdrawable {
     }
 
     event AuctionTriggered(
-        address sellToken,
-        address buyToken,
-        uint auctionIndex,
+        address indexed sellToken,
+        address indexed buyToken,
+        uint indexed auctionIndex,
         uint sellTokenAmount,
         uint sellTokenAmountWithFee
     );
@@ -311,8 +311,8 @@ contract DxMarketMaker is Withdrawable {
     // TODO: emit event
     // TODO: check for all the requirements of dutchx
     event BoughtInAuction(
-        address sellToken,
-        address buyToken,
+        address indexed sellToken,
+        address indexed buyToken,
         uint auctionIndex,
         uint buyTokenAmount,
         bool clearedAuction
@@ -407,6 +407,13 @@ contract DxMarketMaker is Withdrawable {
         return amount >= outstandingVolume;
     }
 
+    function depositAllBalance(address token) public returns (uint amount) {
+        uint balance = ERC20(token).balanceOf(address(this));
+        if (balance > 0) {
+            amount = depositToDx(token, balance);
+        }
+    }
+
     function magic(
         address sellToken,
         address buyToken
@@ -414,9 +421,9 @@ contract DxMarketMaker is Withdrawable {
         public
         returns (bool)
     {
-        // Deposit all token balance to DutchX.
-        depositToDx(sellToken, ERC20(sellToken).balanceOf(address(this)));
-        depositToDx(buyToken, ERC20(buyToken).balanceOf(address(this)));
+        // Deposit dxmm token balance to DutchX.
+        depositAllBalance(sellToken);
+        depositAllBalance(buyToken);
 
         AuctionState state = getAuctionState(sellToken, buyToken);
 
