@@ -19,8 +19,6 @@ interface DxPriceOracleInterface {
 }
 
 
-// TODO: add events for logging calculations and decisions
-// TODO: add fail texts to require calls
 // TODO: add support to token -> token
 contract KyberDxMarketMaker is Withdrawable {
     // This is the representation of ETH as an ERC20 Token for Kyber Network.
@@ -53,40 +51,58 @@ contract KyberDxMarketMaker is Withdrawable {
         DutchExchange _dx,
         KyberNetworkProxy _kyberNetworkProxy
     ) public {
-        require(address(_dx) != address(0));
-        require(address(_kyberNetworkProxy) != address(0));
+        require(
+            address(_dx) != address(0),
+            "DutchExchange address cannot be 0"
+        );
+        require(
+            address(_kyberNetworkProxy) != address(0),
+            "KyberNetworkProxy address cannot be 0"
+        );
 
         dx = DutchExchange(_dx);
         weth = EtherToken(dx.ethToken());
         kyberNetworkProxy = KyberNetworkProxy(_kyberNetworkProxy);
     }
 
-    // TODO: emit event
+    event AmountDepositedToDx(
+        ERC20 indexed token,
+        uint amount
+    );
+
     function depositToDx(
         ERC20 token,
         uint amount
     )
         public
-        onlyAdmin
+        onlyOperator
         returns (uint)
     {
-        require(ERC20(token).approve(dx, amount));
-        return dx.deposit(token, amount);
+        require(ERC20(token).approve(dx, amount), "Cannot approve deposit");
+        uint deposited = dx.deposit(token, amount);
+        emit AmountDepositedToDx(token, deposited);
+        return deposited;
     }
 
-    // TODO: emit event
+    event AmountWithdrawnFromDx(
+        ERC20 indexed token,
+        uint amount
+    );
+
     function withdrawFromDx(
         ERC20 token,
         uint amount
     )
         public
-        onlyAdmin
+        onlyOperator
         returns (uint)
     {
-        return dx.withdraw(token, amount);
+        uint withdrawn = dx.withdraw(token, amount);
+        emit AmountWithdrawnFromDx(token, withdrawn);
+        return withdrawn;
     }
 
-    event ClaimedAuctionTokens(
+    event AuctionTokensClaimed(
         ERC20 indexed sellToken,
         ERC20 indexed buyToken,
         uint previousLastCompletedAuction,
@@ -120,7 +136,7 @@ contract KyberDxMarketMaker is Withdrawable {
         }
 
         lastClaimedAuction[sellToken][buyToken] = lastCompletedAuction;
-        emit ClaimedAuctionTokens(
+        emit AuctionTokensClaimed(
             sellToken,
             buyToken,
             initialLastClaimed,
@@ -144,7 +160,7 @@ contract KyberDxMarketMaker is Withdrawable {
         ERC20 buyToken
     )
         public
-        returns (bool triggered)
+        returns (bool)
     {
         uint missingTokens = calculateMissingTokenForAuctionStart(
             sellToken,
@@ -172,7 +188,6 @@ contract KyberDxMarketMaker is Withdrawable {
         return true;
     }
 
-    // TODO: emit event
     // TODO: check for all the requirements of dutchx
     event BoughtInAuction(
         ERC20 indexed sellToken,
@@ -187,7 +202,7 @@ contract KyberDxMarketMaker is Withdrawable {
         ERC20 buyToken
     )
         public
-        returns (bool bought)
+        returns (bool)
     {
         require(
             getAuctionState(sellToken, buyToken) == AuctionState.AUCTION_IN_PROGRESS,
@@ -228,23 +243,29 @@ contract KyberDxMarketMaker is Withdrawable {
         return true;
     }
 
+    // TODO: consider removing onlyOperator limitation
     function depositAllBalance(
         ERC20 token
     )
         public
-        returns (uint amount)
+        onlyOperator
+        returns (uint)
     {
+        uint amount;
         uint balance = ERC20(token).balanceOf(address(this));
         if (balance > 0) {
             amount = depositToDx(token, balance);
         }
+        return amount;
     }
 
+    // TODO: consider removing onlyOperator limitation
     function magic(
         ERC20 sellToken,
         ERC20 buyToken
     )
         public
+        onlyOperator
         returns (bool)
     {
         // Deposit dxmm token balance to DutchX.
@@ -289,7 +310,7 @@ contract KyberDxMarketMaker is Withdrawable {
         }
 
         // Should be unreachable.
-        require(false, "Unknown auction state");
+        revert("Unknown auction state");
     }
 
     function willAmountClearAuction(
@@ -331,7 +352,7 @@ contract KyberDxMarketMaker is Withdrawable {
         uint den;
         (num, den) = dx.getCurrentAuctionPrice(sellToken, buyToken, auctionIndex);
         // 10^30 * 10^37 = 10^67
-        uint outstandingVolume = atleastZero(int(mul(sellVolume, num) / den - buyVolume));
+        uint outstandingVolume = atleastZero(int(div(mul(sellVolume, num), sub(den, buyVolume))));
         return amount >= outstandingVolume;
     }
 
@@ -377,7 +398,7 @@ contract KyberDxMarketMaker is Withdrawable {
         uint thresholdTokenWei = thresholdNewAuctionToken(sellToken);
 
         if (thresholdTokenWei > currentAuctionSellVolume) {
-            return thresholdTokenWei - currentAuctionSellVolume;
+            return sub(thresholdTokenWei, currentAuctionSellVolume);
         }
 
         return 0;
@@ -397,7 +418,7 @@ contract KyberDxMarketMaker is Withdrawable {
         // amount / (1 - num / den)
         return div(
             mul(amount, den),
-            (den - num)
+            sub(den, num)
         );
     }
 
@@ -422,7 +443,6 @@ contract KyberDxMarketMaker is Withdrawable {
         return AuctionState.NO_AUCTION_TRIGGERED;
     }
 
-    // TODO: support token -> token
     function getKyberRate(
         ERC20 _sellToken,
         ERC20 _buyToken,
@@ -490,11 +510,9 @@ contract KyberDxMarketMaker is Withdrawable {
         // No price for this auction, it is a future one.
         if (den == 0) return 0;
 
-        return mul(sellVolume, num) / den - buyVolume;
+        return sub(div(mul(sellVolume, num), den), buyVolume);
     }
 
-    // --- Safe Math functions ---
-    // ---------------------------
     function atleastZero(int a)
         public
         pure
@@ -507,6 +525,8 @@ contract KyberDxMarketMaker is Withdrawable {
         }
     }
 
+    // --- Safe Math functions ---
+    // (https://github.com/OpenZeppelin/openzeppelin-solidity/blob/master/contracts/math/SafeMath.sol)
     /**
     * @dev Multiplies two numbers, reverts on overflow.
     */
@@ -533,6 +553,17 @@ contract KyberDxMarketMaker is Withdrawable {
         require(b > 0);
         uint256 c = a / b;
         // assert(a == b * c + a % b); // There is no case in which this doesn't hold
+
+        return c;
+    }
+
+    /**
+    * @dev Subtracts two unsigned integers, reverts on overflow (i.e. if
+        subtrahend is greater than minuend).
+    */
+    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
+        require(b <= a);
+        uint256 c = a - b;
 
         return c;
     }

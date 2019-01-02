@@ -82,7 +82,7 @@ contract('KyberDxMarketMaker', async accounts => {
       auctionIndex
     )
     // Auction index is in the future.
-    if (price.den.eq(web3.utils.toBN(0))) return 0
+    if (price.den.eqn(0)) return 0
 
     return sellVolume
       .mul(price.num)
@@ -133,7 +133,7 @@ contract('KyberDxMarketMaker', async accounts => {
       auctionIndex
     )
     let remainingSellVolume = 0
-    if (!price.den.eq(web3.utils.toBN(0))) {
+    if (!price.den.eqn(0)) {
       remainingSellVolume = sellVolume.sub(
         buyVolume.mul(price.num).div(price.den)
       )
@@ -153,7 +153,7 @@ contract('KyberDxMarketMaker', async accounts => {
 
   async function deployTokenAddToDxAndClearFirstAuction() {
     const lister = admin
-    const initialWethWei = web3.utils.toWei('100')
+    const initialWethWei = web3.utils.toWei(new BN(100))
     const knc = await deployToken()
     const kncSymbol = await knc.symbol()
     dbg(`======================================`)
@@ -161,7 +161,7 @@ contract('KyberDxMarketMaker', async accounts => {
     dbg(`======================================`)
     dbg(`\n--- deployed ${kncSymbol}`)
 
-    await weth.deposit({ value: web3.utils.toWei('10000'), from: lister })
+    await weth.deposit({ value: web3.utils.toWei(new BN(10000)), from: lister })
     dbg(`\n--- prepared lister funds`)
     dbg(`lister has ${await weth.balanceOf(lister)} WETH`)
     dbg(`lister has ${await knc.balanceOf(lister)} ${kncSymbol}`)
@@ -494,12 +494,12 @@ contract('KyberDxMarketMaker', async accounts => {
   }
 
   const fundDxmmAndDepositToDxToken = async token => {
-    const amount = web3.utils.toWei('100000000')
+    const amount = web3.utils.toWei(new BN(100000000))
     dbg(
       `Funding dxmm with ${amount} ${await token.symbol.call()} and depositing to DX`
     )
     await token.transfer(dxmm.address, amount, { from: admin })
-    await dxmm.depositToDx(token.address, amount, { from: admin })
+    await dxmm.depositToDx(token.address, amount, { from: operator })
   }
 
   const fundDxmmAndDepositToDxWethForAuction = async (
@@ -518,7 +518,7 @@ contract('KyberDxMarketMaker', async accounts => {
     )
     await weth.deposit({ value: tokensToBuy, from: admin })
     await weth.transfer(dxmm.address, tokensToBuy, { from: admin })
-    await dxmm.depositToDx(weth.address, tokensToBuy, { from: admin })
+    await dxmm.depositToDx(weth.address, tokensToBuy, { from: operator })
   }
 
   before('setup accounts', async () => {
@@ -630,108 +630,120 @@ contract('KyberDxMarketMaker', async accounts => {
   })
 
   it('reject creating dxmm with DutchExchange address 0', async () => {
-    try {
-      await KyberDxMarketMaker.new(
+    await truffleAssert.reverts(
+      KyberDxMarketMaker.new(
         '0x0000000000000000000000000000000000000000',
         await dxmm.kyberNetworkProxy()
-      )
-      assert(false, 'throw was expected in line above.')
-    } catch (e) {
-      assert(Helper.isRevertErrorMessage(e), 'expected revert but got: ' + e)
-    }
+      ),
+      'DutchExchange address cannot be 0'
+    )
   })
 
   it('reject creating dxmm with KyberNetworkProxy address 0', async () => {
-    try {
-      await KyberDxMarketMaker.new(
+    await truffleAssert.reverts(
+      KyberDxMarketMaker.new(
         dx.address,
         '0x0000000000000000000000000000000000000000'
-      )
-    } catch (e) {
-      assert(Helper.isRevertErrorMessage(e), 'expected revert but got: ' + e)
-    }
+      ),
+      'KyberNetworkProxy address cannot be 0'
+    )
   })
 
   it('should allow admin to withdraw from dxmm', async () => {
-    const amount = web3.utils.toWei('1')
+    const amount = web3.utils.toWei(new BN(1))
     await weth.deposit({ value: amount, from: admin })
     const initialWethBalance = await weth.balanceOf(admin)
 
     await weth.transfer(dxmm.address, amount, { from: admin })
-    await dxmm.withdrawToken(weth.address, amount, admin, { from: admin })
+    const res = await dxmm.withdrawToken(weth.address, amount, admin, {
+      from: admin
+    })
 
     const wethBalance = await weth.balanceOf(admin)
     wethBalance.should.be.eq.BN(initialWethBalance)
+
+    truffleAssert.eventEmitted(res, 'TokenWithdraw', ev => {
+      return (
+        ev.token === weth.address && ev.amount.eq(amount) && ev.sendTo === admin
+      )
+    })
   })
 
   it('reject withdrawing from dxmm by non-admin users', async () => {
-    const amount = web3.utils.toWei('1')
+    const amount = web3.utils.toWei(new BN(1))
     await weth.deposit({ value: amount, from: admin })
     await weth.transfer(dxmm.address, amount, { from: admin })
 
-    try {
-      await dxmm.withdrawToken(weth.address, amount, user, { from: user })
-    } catch (e) {
-      assert(Helper.isRevertErrorMessage(e), 'expected revert but got: ' + e)
-    }
+    await truffleAssert.reverts(
+      dxmm.withdrawToken(weth.address, amount, user, { from: user }),
+      'Operation limited to admin'
+    )
   })
 
-  it('should allow depositing to DX by admin', async () => {
-    const amount = web3.utils.toWei('1')
+  it('should allow depositing to DX by operator', async () => {
+    const amount = web3.utils.toWei(new BN(1))
     await weth.deposit({ value: amount, from: admin })
     await weth.transfer(dxmm.address, amount, { from: admin })
     const balanceBefore = await dx.balances(weth.address, dxmm.address)
 
     const updatedBalance = await dxmm.depositToDx.call(weth.address, amount, {
-      from: admin
+      from: operator
     })
-    await dxmm.depositToDx(weth.address, amount, { from: admin })
+    const res = await dxmm.depositToDx(weth.address, amount, { from: operator })
 
     const balanceAfter = await dx.balances(weth.address, dxmm.address)
     updatedBalance.should.be.eq.BN(balanceAfter)
     balanceAfter.should.be.eq.BN(balanceBefore.add(new BN(amount)))
+
+    truffleAssert.eventEmitted(res, 'AmountDepositedToDx', ev => {
+      return ev.token === weth.address && ev.amount.eq(amount)
+    })
   })
 
-  it('reject depositing to DX by non-admins', async () => {
-    const amount = web3.utils.toWei('1')
+  it('reject depositing to DX by non-operators', async () => {
+    const amount = web3.utils.toWei(new BN(1))
     await weth.deposit({ value: amount, from: user })
     await weth.transfer(dxmm.address, amount, { from: user })
 
-    try {
-      await dxmm.depositToDx(weth.address, amount, { from: user })
-    } catch (e) {
-      assert(Helper.isRevertErrorMessage(e), 'expected revert but got: ' + e)
-    }
+    await truffleAssert.reverts(
+      dxmm.depositToDx(weth.address, amount, { from: user }),
+      'Operation limited to operator'
+    )
   })
 
-  it('should allow withdrawing from DX by admin', async () => {
-    const amount = web3.utils.toWei('1')
+  it('should allow withdrawing from DX by operator', async () => {
+    const amount = web3.utils.toWei(new BN(1))
     await weth.deposit({ value: amount, from: admin })
     await weth.transfer(dxmm.address, amount, { from: admin })
     const wethBalanceBefore = await weth.balanceOf(dxmm.address)
     const dxBalanceBefore = await dx.balances(weth.address, dxmm.address)
 
-    await dxmm.depositToDx(weth.address, amount, { from: admin })
-    await dxmm.withdrawFromDx(weth.address, amount, { from: admin })
+    await dxmm.depositToDx(weth.address, amount, { from: operator })
+    const res = await dxmm.withdrawFromDx(weth.address, amount, {
+      from: operator
+    })
 
     const dxBalanceAfter = await dx.balances(weth.address, dxmm.address)
     dxBalanceAfter.should.be.eq.BN(dxBalanceBefore)
 
     const wethBalanceAfter = await weth.balanceOf(dxmm.address)
     wethBalanceAfter.should.be.eq.BN(wethBalanceBefore)
+
+    truffleAssert.eventEmitted(res, 'AmountWithdrawnFromDx', ev => {
+      return ev.token === weth.address && ev.amount.eq(amount)
+    })
   })
 
-  it('reject withdrawing from DX by non-admins', async () => {
-    const amount = web3.utils.toWei('1')
+  it('reject withdrawing from DX by non-operator', async () => {
+    const amount = web3.utils.toWei(new BN(1))
     await weth.deposit({ value: amount, from: admin })
     await weth.transfer(dxmm.address, amount, { from: admin })
-    await dxmm.depositToDx(weth.address, amount, { from: admin })
+    await dxmm.depositToDx(weth.address, amount, { from: operator })
 
-    try {
-      await dxmm.withdrawFromDx(weth.address, amount, { from: user })
-    } catch (e) {
-      assert(Helper.isRevertErrorMessage(e), 'expected revert but got: ' + e)
-    }
+    await truffleAssert.reverts(
+      dxmm.withdrawFromDx(weth.address, amount, { from: user }),
+      'Operation limited to operator'
+    )
   })
 
   xit('should allow checking if balance is above new auction threshold', async () => {
@@ -1448,7 +1460,7 @@ contract('KyberDxMarketMaker', async accounts => {
       dbg(`%%% ev.sellerFunds.eq(${claimedSellerAuction})`)
       dbg(`%%% ev.buyerFunds.eq(${claimedBuyerAuction})`)
 
-      truffleAssert.eventEmitted(res, 'ClaimedAuctionTokens', ev => {
+      truffleAssert.eventEmitted(res, 'AuctionTokensClaimed', ev => {
         return (
           ev.sellToken === knc.address &&
           ev.buyToken === weth.address &&
@@ -1948,7 +1960,7 @@ contract('KyberDxMarketMaker', async accounts => {
       // Initialize dxmm WETH balance
       const dxBalance = await dx.balances(weth.address, dxmm.address)
       dbg(`%%% dxmm balance on dx: ${dxBalance}`)
-      await dxmm.withdrawFromDx(weth.address, dxBalance, { from: admin })
+      await dxmm.withdrawFromDx(weth.address, dxBalance, { from: operator })
       dbg(
         `%%% dxmm balance on dx after: ${await dx.balances(
           weth.address,
@@ -1958,7 +1970,7 @@ contract('KyberDxMarketMaker', async accounts => {
       const wethBalance = await weth.balanceOf(dxmm.address)
       dbg(`%%% dxmm WETH balance: ${wethBalance}`)
       // keep 1 ETH for gas?
-      const withdrawAmount = wethBalance.sub(new BN(web3.utils.toWei('1')))
+      const withdrawAmount = wethBalance.subn(1)
       dbg(`%%% dxmm withdraw amount: ${withdrawAmount}`)
       await dxmm.withdrawToken(weth.address, withdrawAmount, admin, {
         from: admin
@@ -2146,7 +2158,9 @@ contract('KyberDxMarketMaker', async accounts => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
       await fundDxmmAndDepositToDxToken(knc)
 
-      const actionRequired = await dxmm.magic.call(knc.address, weth.address)
+      const actionRequired = await dxmm.magic.call(knc.address, weth.address, {
+        from: operator
+      })
 
       actionRequired.should.be.true
     })
@@ -2155,13 +2169,15 @@ contract('KyberDxMarketMaker', async accounts => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
       await fundDxmmAndDepositToDxToken(knc)
 
-      const res = await dxmm.magic(knc.address, weth.address)
+      const res = await dxmm.magic(knc.address, weth.address, {
+        from: operator
+      })
 
       truffleAssert.eventEmitted(res, 'AuctionTriggered', ev => {
         return (
           ev.sellToken === knc.address &&
           ev.buyToken === weth.address &&
-          ev.auctionIndex.eq(web3.utils.toBN(2))
+          ev.auctionIndex.eqn(2)
         )
       })
     })
@@ -2174,14 +2190,16 @@ contract('KyberDxMarketMaker', async accounts => {
       await dxmmTriggerAndClearAuction(knc, weth)
       await dxmmTriggerAndClearAuction(knc, weth)
 
-      const res = await dxmm.magic(knc.address, weth.address)
+      const res = await dxmm.magic(knc.address, weth.address, {
+        from: operator
+      })
 
-      truffleAssert.eventEmitted(res, 'ClaimedAuctionTokens', ev => {
+      truffleAssert.eventEmitted(res, 'AuctionTokensClaimed', ev => {
         return (
           ev.sellToken === knc.address &&
           ev.buyToken === weth.address &&
-          ev.previousLastCompletedAuction.eq(web3.utils.toBN(0)) &&
-          ev.newLastCompletedAuction.eq(web3.utils.toBN(4))
+          ev.previousLastCompletedAuction.eqn(0) &&
+          ev.newLastCompletedAuction.eqn(4)
         )
       })
     })
@@ -2191,7 +2209,9 @@ contract('KyberDxMarketMaker', async accounts => {
       await fundDxmmAndDepositToDxToken(knc)
       await dxmm.triggerAuction(knc.address, weth.address)
 
-      const actionRequired = await dxmm.magic.call(knc.address, weth.address)
+      const actionRequired = await dxmm.magic.call(knc.address, weth.address, {
+        from: operator
+      })
 
       actionRequired.should.be.false
     })
@@ -2201,10 +2221,12 @@ contract('KyberDxMarketMaker', async accounts => {
       await fundDxmmAndDepositToDxToken(knc)
       await dxmm.triggerAuction(knc.address, weth.address)
 
-      const res = await dxmm.magic(knc.address, weth.address)
+      const res = await dxmm.magic(knc.address, weth.address, {
+        from: operator
+      })
 
       // TODO: check that NO EVENT AT ALL has been emitted
-      truffleAssert.eventNotEmitted(res, 'ClaimedAuctionTokens')
+      truffleAssert.eventNotEmitted(res, 'AuctionTokensClaimed')
       truffleAssert.eventNotEmitted(res, 'AuctionTriggered')
       truffleAssert.eventNotEmitted(res, 'BoughtInAuction')
     })
@@ -2237,7 +2259,9 @@ contract('KyberDxMarketMaker', async accounts => {
       const b = dxPrice.num.mul(kyberPrice.den)
       a.should.be.lt.BN(b)
 
-      const actionRequired = await dxmm.magic.call(knc.address, weth.address)
+      const actionRequired = await dxmm.magic.call(knc.address, weth.address, {
+        from: operator
+      })
 
       actionRequired.should.be.false
     })
@@ -2255,10 +2279,12 @@ contract('KyberDxMarketMaker', async accounts => {
       )
       priceReachedKyber.should.be.false
 
-      const res = await dxmm.magic(knc.address, weth.address)
+      const res = await dxmm.magic(knc.address, weth.address, {
+        from: operator
+      })
 
       // TODO: check that NO EVENT AT ALL has been emitted
-      truffleAssert.eventNotEmitted(res, 'ClaimedAuctionTokens')
+      truffleAssert.eventNotEmitted(res, 'AuctionTokensClaimed')
       truffleAssert.eventNotEmitted(res, 'AuctionTriggered')
       truffleAssert.eventNotEmitted(res, 'BoughtInAuction')
     })
@@ -2278,7 +2304,9 @@ contract('KyberDxMarketMaker', async accounts => {
       )
       await waitUntilKyberPriceReached(knc, weth, auctionIndex, amount)
 
-      const actionRequired = await dxmm.magic.call(knc.address, weth.address)
+      const actionRequired = await dxmm.magic.call(knc.address, weth.address, {
+        from: operator
+      })
 
       const priceReachedKyber = await hasDxPriceReachedKyber(
         knc,
@@ -2312,7 +2340,9 @@ contract('KyberDxMarketMaker', async accounts => {
 
       await fundDxmmAndDepositToDxWethForAuction(knc, weth, auctionIndex)
 
-      const res = await dxmm.magic(knc.address, weth.address)
+      const res = await dxmm.magic(knc.address, weth.address, {
+        from: operator
+      })
 
       truffleAssert.eventEmitted(res, 'BoughtInAuction', ev => {
         return (
@@ -2340,7 +2370,7 @@ contract('KyberDxMarketMaker', async accounts => {
       await weth.deposit({ value: amount, from: admin })
       await weth.transfer(dxmm.address, amount, { from: admin })
 
-      await dxmm.magic(knc.address, weth.address)
+      await dxmm.magic(knc.address, weth.address, { from: operator })
 
       const wethBalance = await weth.balanceOf(dxmm.address)
       wethBalance.should.be.eq.BN(0)
@@ -2358,7 +2388,7 @@ contract('KyberDxMarketMaker', async accounts => {
     const amount = web3.utils.toWei(new BN(10).pow(new BN(6)))
     await knc.transfer(dxmm.address, amount, { from: admin })
 
-    await dxmm.depositAllBalance(knc.address)
+    await dxmm.depositAllBalance(knc.address, { from: operator })
 
     const kncBalance = await knc.balanceOf(dxmm.address)
     kncBalance.should.be.eq.BN(0)
