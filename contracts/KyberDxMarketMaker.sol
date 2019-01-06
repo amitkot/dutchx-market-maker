@@ -160,6 +160,7 @@ contract KyberDxMarketMaker is Withdrawable {
         ERC20 buyToken
     )
         public
+        onlyOperator
         returns (bool)
     {
         uint missingTokens = calculateMissingTokenForAuctionStart(

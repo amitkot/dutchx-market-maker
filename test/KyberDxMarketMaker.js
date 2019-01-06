@@ -473,7 +473,9 @@ contract('KyberDxMarketMaker', async accounts => {
   const dxmmTriggerAndClearAuction = async (sellToken, buyToken) => {
     // Trigger an auction
     await fundDxmmAndDepositToDxToken(sellToken)
-    await dxmm.triggerAuction(sellToken.address, buyToken.address)
+    await dxmm.triggerAuction(sellToken.address, buyToken.address, {
+      from: operator
+    })
     const auctionIndex = await dx.getAuctionIndex(
       sellToken.address,
       buyToken.address
@@ -689,7 +691,9 @@ contract('KyberDxMarketMaker', async accounts => {
     const updatedBalance = await dxmm.depositToDx.call(weth.address, amount, {
       from: operator
     })
-    const res = await dxmm.depositToDx(weth.address, amount, { from: operator })
+    const res = await dxmm.depositToDx(weth.address, amount, {
+      from: operator
+    })
 
     const balanceAfter = await dx.balances(weth.address, dxmm.address)
     updatedBalance.should.be.eq.BN(balanceAfter)
@@ -1915,7 +1919,7 @@ contract('KyberDxMarketMaker', async accounts => {
 
       await fundDxmmAndDepositToDxToken(knc)
 
-      await dxmm.triggerAuction(knc.address, weth.address)
+      await dxmm.triggerAuction(knc.address, weth.address, { from: operator })
 
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
@@ -1978,7 +1982,7 @@ contract('KyberDxMarketMaker', async accounts => {
       dbg(`%%% dxmm balance after: ${await weth.balanceOf(dxmm.address)}`)
 
       await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.triggerAuction(knc.address, weth.address)
+      await dxmm.triggerAuction(knc.address, weth.address, { from: operator })
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
@@ -1993,7 +1997,7 @@ contract('KyberDxMarketMaker', async accounts => {
 
       await fundDxmmAndDepositToDxToken(knc)
 
-      await dxmm.triggerAuction(knc.address, weth.address)
+      await dxmm.triggerAuction(knc.address, weth.address, { from: operator })
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
       const buyerBalanceBefore = await dx.buyerBalances(
@@ -2041,13 +2045,24 @@ contract('KyberDxMarketMaker', async accounts => {
 
       const triggered = await dxmm.triggerAuction.call(
         knc.address,
-        weth.address
+        weth.address,
+        { from: operator }
       )
-      await dxmm.triggerAuction(knc.address, weth.address)
+      await dxmm.triggerAuction(knc.address, weth.address, { from: operator })
 
       triggered.should.be.true
       const auctionStart = await dx.getAuctionStart(knc.address, weth.address)
       auctionStart.should.not.be.eq.BN(DX_AUCTION_START_WAITING_FOR_FUNDING)
+    })
+
+    it('revert if called by non-operator user', async () => {
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+      await fundDxmmAndDepositToDxToken(knc)
+
+      await truffleAssert.reverts(
+        dxmm.triggerAuction(knc.address, weth.address, { from: user }),
+        'Operation limited to operator'
+      )
     })
 
     it("revert if doesn't have enough balance", async () => {
@@ -2056,7 +2071,7 @@ contract('KyberDxMarketMaker', async accounts => {
       dbg(`after deployTokenAddToDxAndClearFirstAuction()`)
 
       await truffleAssert.reverts(
-        dxmm.triggerAuction(knc.address, weth.address),
+        dxmm.triggerAuction(knc.address, weth.address, { from: operator }),
         'Not enough tokens to trigger auction'
       )
     })
@@ -2069,7 +2084,8 @@ contract('KyberDxMarketMaker', async accounts => {
 
       const triggered = await dxmm.triggerAuction.call(
         knc.address,
-        weth.address
+        weth.address,
+        { from: operator }
       )
 
       triggered.should.be.false
@@ -2084,7 +2100,8 @@ contract('KyberDxMarketMaker', async accounts => {
 
       const triggered = await dxmm.triggerAuction.call(
         knc.address,
-        weth.address
+        weth.address,
+        { from: operator }
       )
 
       triggered.should.be.false
@@ -2100,8 +2117,12 @@ contract('KyberDxMarketMaker', async accounts => {
       )
       const missingTokensWithFee = await dxmm.addFee(missingTokens)
 
-      await dxmm.triggerAuction.call(knc.address, weth.address)
-      const res = await dxmm.triggerAuction(knc.address, weth.address)
+      await dxmm.triggerAuction.call(knc.address, weth.address, {
+        from: operator
+      })
+      const res = await dxmm.triggerAuction(knc.address, weth.address, {
+        from: operator
+      })
 
       truffleAssert.eventEmitted(res, 'AuctionTriggered', ev => {
         return (
@@ -2207,7 +2228,7 @@ contract('KyberDxMarketMaker', async accounts => {
     it('auction already triggered, waiting - no action required', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
       await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.triggerAuction(knc.address, weth.address)
+      await dxmm.triggerAuction(knc.address, weth.address, { from: operator })
 
       const actionRequired = await dxmm.magic.call(knc.address, weth.address, {
         from: operator
@@ -2219,7 +2240,7 @@ contract('KyberDxMarketMaker', async accounts => {
     it('auction already triggered, waiting - no action performed', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
       await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.triggerAuction(knc.address, weth.address)
+      await dxmm.triggerAuction(knc.address, weth.address, { from: operator })
 
       const res = await dxmm.magic(knc.address, weth.address, {
         from: operator
@@ -2234,7 +2255,7 @@ contract('KyberDxMarketMaker', async accounts => {
     it('auction in progress but price not ready for buying, waiting - nothing to do', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
       await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.triggerAuction(knc.address, weth.address)
+      await dxmm.triggerAuction(knc.address, weth.address, { from: operator })
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
@@ -2269,7 +2290,7 @@ contract('KyberDxMarketMaker', async accounts => {
     it('auction in progress but price not ready for buying, waiting - no action performed', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
       await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.triggerAuction(knc.address, weth.address)
+      await dxmm.triggerAuction(knc.address, weth.address, { from: operator })
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
       const priceReachedKyber = await hasDxPriceReachedKyber(
@@ -2292,7 +2313,7 @@ contract('KyberDxMarketMaker', async accounts => {
     it('auction in progress, price ready for buying -> should buy', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
       await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.triggerAuction(knc.address, weth.address)
+      await dxmm.triggerAuction(knc.address, weth.address, { from: operator })
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
@@ -2320,7 +2341,7 @@ contract('KyberDxMarketMaker', async accounts => {
     it('auction in progress, price ready for buying -> bought and cleared auction', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
       await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.triggerAuction(knc.address, weth.address)
+      await dxmm.triggerAuction(knc.address, weth.address, { from: operator })
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
