@@ -493,7 +493,9 @@ contract('KyberDxMarketMaker', async accounts => {
       buyToken,
       auctionIndex
     )
-    await dxmm.buyInAuction(sellToken.address, buyToken.address)
+    await dxmm.buyInAuction(sellToken.address, buyToken.address, {
+      from: operator
+    })
 
     return auctionIndex
   }
@@ -1878,7 +1880,7 @@ contract('KyberDxMarketMaker', async accounts => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
       await truffleAssert.reverts(
-        dxmm.buyInAuction(knc.address, weth.address),
+        dxmm.buyInAuction(knc.address, weth.address, { from: operator }),
         'No auction in progress'
       )
     })
@@ -1888,7 +1890,7 @@ contract('KyberDxMarketMaker', async accounts => {
       await triggerAuction(knc, user)
 
       await truffleAssert.reverts(
-        dxmm.buyInAuction(knc.address, weth.address),
+        dxmm.buyInAuction(knc.address, weth.address, { from: operator }),
         'No auction in progress'
       )
     })
@@ -1905,7 +1907,9 @@ contract('KyberDxMarketMaker', async accounts => {
         dxmm.address
       )
 
-      const bought = await dxmm.buyInAuction.call(knc.address, weth.address)
+      const bought = await dxmm.buyInAuction.call(knc.address, weth.address, {
+        from: operator
+      })
 
       bought.should.be.false
       const buyerBalanceAfter = await dx.buyerBalances(
@@ -1946,8 +1950,10 @@ contract('KyberDxMarketMaker', async accounts => {
         auctionIndex,
         dxmm.address
       )
-      const bought = await dxmm.buyInAuction.call(knc.address, weth.address)
-      await dxmm.buyInAuction(knc.address, weth.address)
+      const bought = await dxmm.buyInAuction.call(knc.address, weth.address, {
+        from: operator
+      })
+      await dxmm.buyInAuction(knc.address, weth.address, { from: operator })
 
       bought.should.be.true
       const buyerBalanceAfter = await dx.buyerBalances(
@@ -1958,6 +1964,73 @@ contract('KyberDxMarketMaker', async accounts => {
       )
       buyerBalanceAfter.should.be.eq.BN(
         buyerBalanceBefore.add(updatedTokensToBuy)
+      )
+    })
+
+    it('should emit event with amount bought', async () => {
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+      await fundDxmmAndDepositToDxToken(knc)
+
+      await dxmm.triggerAuction(knc.address, weth.address, { from: operator })
+      const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+      await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
+      const buyerBalanceBefore = await dx.buyerBalances(
+        knc.address,
+        weth.address,
+        auctionIndex,
+        dxmm.address
+      )
+
+      // This is more WETH than will eventually be required as the rate
+      // improves block by block and we waste a couple of blocks in These
+      // deposits
+      await fundDxmmAndDepositToDxWethForAuction(knc, weth, auctionIndex)
+
+      // Rate lowers as time goes by
+      const buyTokenAmount = await dxmm.calculateAuctionBuyTokens(
+        knc.address,
+        weth.address,
+        auctionIndex,
+        dxmm.address
+      )
+      const res = await dxmm.buyInAuction(knc.address, weth.address, {
+        from: operator
+      })
+
+      dbg(`%%% ev.sellToken === ${knc.address}`)
+      dbg(`%%% ev.buyToken === ${weth.address}`)
+      dbg(`%%% ev.auctionIndex.eq(${auctionIndex})`)
+      dbg(`%%% ev.buyTokenAmount.eq(${buyTokenAmount})`)
+      dbg(`%%% ev.clearedAuction == true`)
+      truffleAssert.eventEmitted(res, 'BoughtInAuction', ev => {
+        return (
+          ev.sellToken === knc.address &&
+          ev.buyToken === weth.address &&
+          ev.auctionIndex.eq(auctionIndex) &&
+          ev.buyTokenAmount.eq(buyTokenAmount) &&
+          ev.clearedAuction
+        )
+      })
+    })
+
+    it('should fail if called from non-operator user', async () => {
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+      await fundDxmmAndDepositToDxToken(knc)
+
+      await dxmm.triggerAuction(knc.address, weth.address, { from: operator })
+
+      const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+      await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
+
+      // This is more WETH than will eventually be required as the rate
+      // improves block by block and we waste a couple of blocks in These
+      // deposits
+      await fundDxmmAndDepositToDxWethForAuction(knc, weth, auctionIndex)
+
+      await truffleAssert.reverts(
+        dxmm.buyInAuction(knc.address, weth.address, { from: user }),
+        'Operation limited to operator'
       )
     })
 
@@ -1990,54 +2063,9 @@ contract('KyberDxMarketMaker', async accounts => {
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       await truffleAssert.reverts(
-        dxmm.buyInAuction(knc.address, weth.address),
+        dxmm.buyInAuction(knc.address, weth.address, { from: operator }),
         'Not enough buy token to buy required amount'
       )
-    })
-
-    it('should buy amount that it sold', async () => {
-      const knc = await deployTokenAddToDxAndClearFirstAuction()
-
-      await fundDxmmAndDepositToDxToken(knc)
-
-      await dxmm.triggerAuction(knc.address, weth.address, { from: operator })
-      const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
-      await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
-      const buyerBalanceBefore = await dx.buyerBalances(
-        knc.address,
-        weth.address,
-        auctionIndex,
-        dxmm.address
-      )
-
-      // This is more WETH than will eventually be required as the rate
-      // improves block by block and we waste a couple of blocks in These
-      // deposits
-      await fundDxmmAndDepositToDxWethForAuction(knc, weth, auctionIndex)
-
-      // Rate lowers as time goes by
-      const buyTokenAmount = await dxmm.calculateAuctionBuyTokens(
-        knc.address,
-        weth.address,
-        auctionIndex,
-        dxmm.address
-      )
-      const res = await dxmm.buyInAuction(knc.address, weth.address)
-
-      dbg(`%%% ev.sellToken === ${knc.address}`)
-      dbg(`%%% ev.buyToken === ${weth.address}`)
-      dbg(`%%% ev.auctionIndex.eq(${auctionIndex})`)
-      dbg(`%%% ev.buyTokenAmount.eq(${buyTokenAmount})`)
-      dbg(`%%% ev.clearedAuction == true`)
-      truffleAssert.eventEmitted(res, 'BoughtInAuction', ev => {
-        return (
-          ev.sellToken === knc.address &&
-          ev.buyToken === weth.address &&
-          ev.auctionIndex.eq(auctionIndex) &&
-          ev.buyTokenAmount.eq(buyTokenAmount) &&
-          ev.clearedAuction
-        )
-      })
     })
   })
 
