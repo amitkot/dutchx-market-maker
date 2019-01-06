@@ -63,6 +63,21 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     return token
   }
 
+  const deployTokenVarialbeDecimals = async decimals => {
+    const token = await TestToken.new(
+      'Some Token',
+      'KNC' + tokenDeployedIndex++,
+      decimals,
+      { from: admin }
+    )
+    dbg(
+      `Deployed token number ${tokenDeployedIndex} with ${decimals} decimals at ${
+        token.address
+      }`
+    )
+    return token
+  }
+
   const calculateRemainingBuyVolume = async (
     sellToken,
     buyToken,
@@ -1387,6 +1402,24 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     dxmmValue.should.be.equal(kyberValue)
   })
 
+  it.only('kyber rates provided only for 18 decimals sell tokens', async () => {
+    const token9Decimals = await deployTokenVarialbeDecimals(9)
+
+    await truffleAssert.reverts(
+      dxmm.getKyberRate(token9Decimals.address, weth.address, 1 /* amount */),
+      'Only 18 decimals tokens are supported'
+    )
+  })
+
+  it.only('kyber rates provided only for 18 decimals buy tokens', async () => {
+    const token9Decimals = await deployTokenVarialbeDecimals(9)
+
+    await truffleAssert.reverts(
+      dxmm.getKyberRate(weth.address, token9Decimals.address, 1 /* amount */),
+      'Only 18 decimals tokens are supported'
+    )
+  })
+
   describe('claim tokens after auction', () => {
     it('single auction triggered and cleared, all amounts claimed', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
@@ -2120,7 +2153,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     })
   })
 
-  describe('unified flow', () => {
+  describe.only('unified flow', () => {
     const hasDxPriceReachedKyber = async (
       sellToken,
       buyToken,
@@ -2163,7 +2196,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
       await fundDxmmAndDepositToDxToken(knc)
 
-      const actionRequired = await dxmm.magic.call(knc.address, weth.address, {
+      const actionRequired = await dxmm.step.call(knc.address, weth.address, {
         from: operator
       })
 
@@ -2174,7 +2207,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
       await fundDxmmAndDepositToDxToken(knc)
 
-      const res = await dxmm.magic(knc.address, weth.address, {
+      const res = await dxmm.step(knc.address, weth.address, {
         from: operator
       })
 
@@ -2195,7 +2228,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       await dxmmTriggerAndClearAuction(knc, weth)
       await dxmmTriggerAndClearAuction(knc, weth)
 
-      const res = await dxmm.magic(knc.address, weth.address, {
+      const res = await dxmm.step(knc.address, weth.address, {
         from: operator
       })
 
@@ -2214,7 +2247,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       await fundDxmmAndDepositToDxToken(knc)
       await dxmm.testTriggerAuction(knc.address, weth.address)
 
-      const actionRequired = await dxmm.magic.call(knc.address, weth.address, {
+      const actionRequired = await dxmm.step.call(knc.address, weth.address, {
         from: operator
       })
 
@@ -2226,7 +2259,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       await fundDxmmAndDepositToDxToken(knc)
       await dxmm.testTriggerAuction(knc.address, weth.address)
 
-      const res = await dxmm.magic(knc.address, weth.address, {
+      const res = await dxmm.step(knc.address, weth.address, {
         from: operator
       })
 
@@ -2264,7 +2297,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       const b = dxPrice.num.mul(kyberPrice.den)
       a.should.be.lt.BN(b)
 
-      const actionRequired = await dxmm.magic.call(knc.address, weth.address, {
+      const actionRequired = await dxmm.step.call(knc.address, weth.address, {
         from: operator
       })
 
@@ -2284,7 +2317,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       )
       priceReachedKyber.should.be.false
 
-      const res = await dxmm.magic(knc.address, weth.address, {
+      const res = await dxmm.step(knc.address, weth.address, {
         from: operator
       })
 
@@ -2309,7 +2342,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       )
       await waitUntilKyberPriceReached(knc, weth, auctionIndex, amount)
 
-      const actionRequired = await dxmm.magic.call(knc.address, weth.address, {
+      const actionRequired = await dxmm.step.call(knc.address, weth.address, {
         from: operator
       })
 
@@ -2345,7 +2378,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
       await fundDxmmAndDepositToDxWethForAuction(knc, weth, auctionIndex)
 
-      const res = await dxmm.magic(knc.address, weth.address, {
+      const res = await dxmm.step(knc.address, weth.address, {
         from: operator
       })
 
@@ -2375,7 +2408,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       await weth.deposit({ value: amount, from: admin })
       await weth.transfer(dxmm.address, amount, { from: admin })
 
-      await dxmm.magic(knc.address, weth.address, { from: operator })
+      await dxmm.step(knc.address, weth.address, { from: operator })
 
       const wethBalance = await weth.balanceOf(dxmm.address)
       wethBalance.should.be.eq.BN(0)
@@ -2383,26 +2416,14 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       kncBalance.should.be.eq.BN(0)
     })
 
-    it.only('auction in progress, price ready for buying -> should buy', async () => {
+    it('auction in progress, price ready for buying -> should buy', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
       await fundDxmmAndDepositToDxToken(knc)
       await dxmm.testTriggerAuction(knc.address, weth.address)
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
-      const amount = await dxmm.calculateAuctionBuyTokens(
-        knc.address,
-        weth.address,
-        auctionIndex,
-        dxmm.address
-      )
-
-      const waitUntilPriceIs0 = async (
-        sellToken,
-        buyToken,
-        auctionIndex,
-        amount
-      ) => {
+      const waitUntilPriceIs0 = async (sellToken, buyToken, auctionIndex) => {
         let t = await blockChainTime()
         let price = await dx.getCurrentAuctionPrice(
           sellToken.address,
@@ -2440,9 +2461,9 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         dbg(`outstandingVolume: ${outstandingVolume}`)
       }
 
-      await waitUntilPriceIs0(knc, weth, auctionIndex, amount)
+      await waitUntilPriceIs0(knc, weth, auctionIndex)
 
-      const res = await dxmm.magic(knc.address, weth.address, {
+      const res = await dxmm.step(knc.address, weth.address, {
         from: operator
       })
 
@@ -2474,13 +2495,31 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       await weth.deposit({ value: amount, from: admin })
       await weth.transfer(dxmm.address, amount, { from: admin })
 
-      await dxmm.magic(knc.address, weth.address, { from: operator })
+      await dxmm.step(knc.address, weth.address, { from: operator })
 
       const kncBalance = await knc.balanceOf(dxmm.address)
       const wethBalance = await weth.balanceOf(dxmm.address)
 
       kncBalance.should.be.eq.BN(0)
       wethBalance.should.be.eq.BN(0)
+    })
+
+    it('Support only Tokens with 18 decimals for sellToken', async () => {
+      const token9Decimals = await deployTokenVarialbeDecimals(9)
+
+      await truffleAssert.reverts(
+        dxmm.step(token9Decimals.address, weth.address, { from: operator }),
+        'Only 18 decimals tokens are supported'
+      )
+    })
+
+    it('Support only Tokens with 18 decimals for buyToken', async () => {
+      const token9Decimals = await deployTokenVarialbeDecimals(9)
+
+      await truffleAssert.reverts(
+        dxmm.step(weth.address, token9Decimals.address, { from: operator }),
+        'Only 18 decimals tokens are supported'
+      )
     })
 
     it('several cycles')

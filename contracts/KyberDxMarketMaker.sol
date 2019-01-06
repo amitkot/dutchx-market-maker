@@ -154,7 +154,7 @@ contract KyberDxMarketMaker is Withdrawable {
         stage, false otherwise.
     */
     // TODO: consider removing onlyOperator limitation
-    function magic(
+    function step(
         ERC20 sellToken,
         ERC20 buyToken
     )
@@ -162,6 +162,16 @@ contract KyberDxMarketMaker is Withdrawable {
         onlyOperator
         returns (bool)
     {
+        // KyberNetworkProxy.getExpectedRate() always returns a rate between
+        // tokens (and not between token wei as DutchX does.
+        // For this reason the rate is currently compatible only for tokens that
+        // have 18 decimals and is handled as though it is rate / 10**18.
+        // TODO: handle tokens with number of decimals other than 18.
+        require(
+            sellToken.decimals() == 18 && buyToken.decimals() == 18,
+            "Only 18 decimals tokens are supported"
+        );
+
         // Deposit dxmm token balance to DutchX.
         depositAllBalance(sellToken);
         depositAllBalance(buyToken);
@@ -176,14 +186,13 @@ contract KyberDxMarketMaker is Withdrawable {
 
         if (state == AuctionState.NO_AUCTION_TRIGGERED) {
             claimAuctionTokens(sellToken, buyToken);
-            triggerAuction(sellToken, buyToken);
+            require(triggerAuction(sellToken, buyToken));
             return true;
         }
 
         if (state == AuctionState.AUCTION_IN_PROGRESS) {
             if (isPriceRightForBuying(sellToken, buyToken, auctionIndex)) {
-                buyInAuction(sellToken, buyToken);
-                return true;
+                return buyInAuction(sellToken, buyToken);
             }
             return false;
         }
@@ -331,6 +340,17 @@ contract KyberDxMarketMaker is Withdrawable {
         view
         returns (uint num, uint den)
     {
+        // KyberNetworkProxy.getExpectedRate() always returns a rate between
+        // tokens (and not between token wei as DutchX does.
+        // For this reason the rate is currently compatible only for tokens that
+        // have 18 decimals and is handled as though it is rate / 10**18.
+        // TODO: handle tokens with number of decimals other than 18.
+        require(
+            _sellToken.decimals() == 18 && _buyToken.decimals() == 18,
+            "Only 18 decimals tokens are supported"
+        );
+
+        // Kyber uses a special constant address for representing ETH.
         ERC20 sellToken = address(_sellToken) == address(weth) ? KYBER_ETH_TOKEN : _sellToken;
         ERC20 buyToken = address(_buyToken) == address(weth) ? KYBER_ETH_TOKEN : _buyToken;
         uint rate;
@@ -340,8 +360,6 @@ contract KyberDxMarketMaker is Withdrawable {
             amount
         );
 
-        // KyberNetworkProxy.getExpectedRate() always returns a result that is
-        // rate / 10**18.
         return (rate, 10 ** 18);
     }
 
