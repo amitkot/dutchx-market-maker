@@ -146,138 +146,13 @@ contract KyberDxMarketMaker is Withdrawable {
         );
     }
 
-    event AuctionTriggered(
-        ERC20 indexed sellToken,
-        ERC20 indexed buyToken,
-        uint indexed auctionIndex,
-        uint sellTokenAmount,
-        uint sellTokenAmountWithFee
-    );
+    /**
+        Participates in the auction by taking the appropriate step according to
+        the auction state.
 
-    // TODO: maybe verify that pair is listed in dutchx
-    function triggerAuction(
-        ERC20 sellToken,
-        ERC20 buyToken
-    )
-        public
-        onlyOperator
-        returns (bool)
-    {
-        uint missingTokens = calculateMissingTokenForAuctionStart(
-            sellToken,
-            buyToken
-        );
-        uint missingTokensWithFee = addFee(missingTokens);
-        if (missingTokensWithFee == 0) return false;
-
-        uint balance = dx.balances(sellToken, address(this));
-        require(
-            balance >= missingTokensWithFee,
-            "Not enough tokens to trigger auction"
-        );
-
-        uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
-        dx.postSellOrder(sellToken, buyToken, auctionIndex, missingTokensWithFee);
-
-        emit AuctionTriggered(
-            sellToken,
-            buyToken,
-            auctionIndex,
-            missingTokens,
-            missingTokensWithFee
-        );
-        return true;
-    }
-
-    // TODO: check for all the requirements of dutchx
-    event BoughtInAuction(
-        ERC20 indexed sellToken,
-        ERC20 indexed buyToken,
-        uint auctionIndex,
-        uint buyTokenAmount,
-        bool clearedAuction
-    );
-
-    function buyInAuction(
-        ERC20 sellToken,
-        ERC20 buyToken
-    )
-        public
-        onlyOperator
-        returns (bool)
-    {
-        require(
-            getAuctionState(sellToken, buyToken) == AuctionState.AUCTION_IN_PROGRESS,
-            "No auction in progress"
-        );
-
-        uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
-        uint buyTokenAmount = calculateAuctionBuyTokens(
-            sellToken,
-            buyToken,
-            auctionIndex,
-            address(this)
-        );
-        if (buyTokenAmount == 0) {
-            // If price has dropped to 0 we buy in the auction to clear it.
-            uint num;
-            (num,) = dx.getCurrentAuctionPrice(sellToken, buyToken, auctionIndex);
-            if (num == 0) {
-                dx.postBuyOrder(sellToken, buyToken, auctionIndex, buyTokenAmount);
-                emit BoughtInAuction(sellToken, buyToken, auctionIndex, buyTokenAmount, true /* willClearAuction */);
-                return true;
-            }
-            return false;
-        }
-
-        bool willClearAuction = willAmountClearAuction(
-            sellToken,
-            buyToken,
-            auctionIndex,
-            buyTokenAmount
-        );
-        if (!willClearAuction) {
-            buyTokenAmount = addFee(buyTokenAmount);
-        }
-
-        require(
-            dx.balances(buyToken, address(this)) >= buyTokenAmount,
-            "Not enough buy token to buy required amount"
-        );
-        dx.postBuyOrder(sellToken, buyToken, auctionIndex, buyTokenAmount);
-        emit BoughtInAuction(
-            sellToken,
-            buyToken,
-            auctionIndex,
-            buyTokenAmount,
-            willClearAuction
-        );
-        return true;
-    }
-
-    // TODO: consider removing onlyOperator limitation
-    function depositAllBalance(
-        ERC20 token
-    )
-        public
-        onlyOperator
-        returns (uint)
-    {
-        uint amount;
-        uint balance = ERC20(token).balanceOf(address(this));
-        if (balance > 0) {
-            amount = depositToDx(token, balance);
-        }
-        return amount;
-    }
-
-    event CurrentAuctionState(
-        address indexed sellToken,
-        address indexed buyToken,
-        uint auctionIndex,
-        AuctionState auctionState
-    );
-
+        Returns true if there is a step to be taken in this auction at this
+        stage, false otherwise.
+    */
     // TODO: consider removing onlyOperator limitation
     function magic(
         ERC20 sellToken,
@@ -529,6 +404,142 @@ contract KyberDxMarketMaker is Withdrawable {
         }
     }
 
+    event AuctionTriggered(
+        ERC20 indexed sellToken,
+        ERC20 indexed buyToken,
+        uint indexed auctionIndex,
+        uint sellTokenAmount,
+        uint sellTokenAmountWithFee
+    );
+
+    // TODO: maybe verify that pair is listed in dutchx
+    function triggerAuction(
+        ERC20 sellToken,
+        ERC20 buyToken
+    )
+        internal
+        returns (bool)
+    {
+        uint missingTokens = calculateMissingTokenForAuctionStart(
+            sellToken,
+            buyToken
+        );
+        uint missingTokensWithFee = addFee(missingTokens);
+        if (missingTokensWithFee == 0) return false;
+
+        uint balance = dx.balances(sellToken, address(this));
+        require(
+            balance >= missingTokensWithFee,
+            "Not enough tokens to trigger auction"
+        );
+
+        uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
+        dx.postSellOrder(sellToken, buyToken, auctionIndex, missingTokensWithFee);
+
+        emit AuctionTriggered(
+            sellToken,
+            buyToken,
+            auctionIndex,
+            missingTokens,
+            missingTokensWithFee
+        );
+        return true;
+    }
+
+    // TODO: check for all the requirements of dutchx
+    event BoughtInAuction(
+        ERC20 indexed sellToken,
+        ERC20 indexed buyToken,
+        uint auctionIndex,
+        uint buyTokenAmount,
+        bool clearedAuction
+    );
+
+    /**
+        Will calculate the amount that the bot has sold in current auction and
+        buy that amount.
+
+        Returns false if ended up not buying.
+        Revets if no auction active or not enough tokens for buying.
+    */
+    function buyInAuction(
+        ERC20 sellToken,
+        ERC20 buyToken
+    )
+        internal
+        returns (bool bought)
+    {
+        require(
+            getAuctionState(sellToken, buyToken) == AuctionState.AUCTION_IN_PROGRESS,
+            "No auction in progress"
+        );
+
+        uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
+        uint buyTokenAmount = calculateAuctionBuyTokens(
+            sellToken,
+            buyToken,
+            auctionIndex,
+            address(this)
+        );
+        if (buyTokenAmount == 0) {
+            // If price has dropped to 0 we buy in the auction to clear it.
+            uint num;
+            (num,) = dx.getCurrentAuctionPrice(sellToken, buyToken, auctionIndex);
+            if (num == 0) {
+                dx.postBuyOrder(sellToken, buyToken, auctionIndex, buyTokenAmount);
+                emit BoughtInAuction(sellToken, buyToken, auctionIndex, buyTokenAmount, true /* willClearAuction */);
+                return true;
+            }
+            return false;
+        }
+
+        bool willClearAuction = willAmountClearAuction(
+            sellToken,
+            buyToken,
+            auctionIndex,
+            buyTokenAmount
+        );
+        if (!willClearAuction) {
+            buyTokenAmount = addFee(buyTokenAmount);
+        }
+
+        require(
+            dx.balances(buyToken, address(this)) >= buyTokenAmount,
+            "Not enough buy token to buy required amount"
+        );
+
+        dx.postBuyOrder(sellToken, buyToken, auctionIndex, buyTokenAmount);
+        emit BoughtInAuction(
+            sellToken,
+            buyToken,
+            auctionIndex,
+            buyTokenAmount,
+            willClearAuction
+        );
+        return true;
+    }
+
+    function depositAllBalance(
+        ERC20 token
+    )
+        internal
+        returns (uint)
+    {
+        uint amount;
+        uint balance = ERC20(token).balanceOf(address(this));
+        if (balance > 0) {
+            amount = depositToDx(token, balance);
+        }
+        return amount;
+    }
+
+    event CurrentAuctionState(
+        address indexed sellToken,
+        address indexed buyToken,
+        uint auctionIndex,
+        AuctionState auctionState
+    );
+
     event PriceIsRightForBuying(
         address indexed sellToken,
         address indexed buyToken,
@@ -582,7 +593,6 @@ contract KyberDxMarketMaker is Withdrawable {
         );
         return shouldBuy;
     }
-
 
     // --- Safe Math functions ---
     // (https://github.com/OpenZeppelin/openzeppelin-solidity/blob/master/contracts/math/SafeMath.sol)
