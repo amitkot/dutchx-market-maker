@@ -217,7 +217,17 @@ contract KyberDxMarketMaker is Withdrawable {
             auctionIndex,
             address(this)
         );
-        if (buyTokenAmount == 0) return false;
+        if (buyTokenAmount == 0) {
+            // If price has dropped to 0 we buy in the auction to clear it.
+            uint num;
+            (num,) = dx.getCurrentAuctionPrice(sellToken, buyToken, auctionIndex);
+            if (num == 0) {
+                dx.postBuyOrder(sellToken, buyToken, auctionIndex, buyTokenAmount);
+                emit BoughtInAuction(sellToken, buyToken, auctionIndex, buyTokenAmount, true /* willClearAuction */);
+                return true;
+            }
+            return false;
+        }
 
         bool willClearAuction = willAmountClearAuction(
             sellToken,
@@ -260,6 +270,13 @@ contract KyberDxMarketMaker is Withdrawable {
         return amount;
     }
 
+    event CurrentAuctionState(
+        address indexed sellToken,
+        address indexed buyToken,
+        uint auctionIndex,
+        AuctionState auctionState
+    );
+
     // TODO: consider removing onlyOperator limitation
     function magic(
         ERC20 sellToken,
@@ -274,6 +291,8 @@ contract KyberDxMarketMaker is Withdrawable {
         depositAllBalance(buyToken);
 
         AuctionState state = getAuctionState(sellToken, buyToken);
+        uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
+        emit CurrentAuctionState(sellToken, buyToken, auctionIndex, state);
 
         if (state == AuctionState.AUCTION_TRIGGERED_WAITING) {
             return false;
@@ -286,28 +305,11 @@ contract KyberDxMarketMaker is Withdrawable {
         }
 
         if (state == AuctionState.AUCTION_IN_PROGRESS) {
-            // TODO: extract into a new function
-            uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
-            uint amount = calculateAuctionBuyTokens(
-                sellToken,
-                buyToken,
-                auctionIndex,
-                address(this)
-            );
-            uint dNum;
-            uint dDen;
-            (dNum, dDen) = dx.getCurrentAuctionPrice(sellToken, buyToken, auctionIndex);
-            uint kNum;
-            uint kDen;
-            (kNum, kDen) = getKyberRate(sellToken, buyToken, amount);
-
-            // TODO: Check for overflow explicitly?
-            if (mul(dNum, kDen) > mul(kNum, dDen)) {
-                return false;
+            if (isPriceRightForBuying(sellToken, buyToken, auctionIndex)) {
+                buyInAuction(sellToken, buyToken);
+                return true;
             }
-
-            buyInAuction(sellToken, buyToken);
-            return true;
+            return false;
         }
 
         // Should be unreachable.
@@ -525,6 +527,61 @@ contract KyberDxMarketMaker is Withdrawable {
             return uint(a);
         }
     }
+
+    event PriceIsRightForBuying(
+        address indexed sellToken,
+        address indexed buyToken,
+        uint auctionIndex,
+        uint amount,
+        uint dutchExchangePriceNum,
+        uint dutchExchangePriceDen,
+        uint kyberPriceNum,
+        uint kyberPriceDen
+    );
+
+    function isPriceRightForBuying(
+        ERC20 sellToken,
+        ERC20 buyToken,
+        uint auctionIndex
+    )
+        internal
+        returns (bool)
+    {
+        uint amount = calculateAuctionBuyTokens(
+            sellToken,
+            buyToken,
+            auctionIndex,
+            address(this)
+        );
+
+        uint dNum;
+        uint dDen;
+        (dNum, dDen) = dx.getCurrentAuctionPrice(
+            sellToken,
+            buyToken,
+            auctionIndex
+        );
+
+        uint kNum;
+        uint kDen;
+        (kNum, kDen) = getKyberRate(sellToken, buyToken, amount);
+
+        // TODO: Check for overflow explicitly?
+        bool shouldBuy = mul(dNum, kDen) <= mul(kNum, dDen);
+        // TODO: should we add a boolean for shouldBuy?
+        emit PriceIsRightForBuying(
+            sellToken,
+            buyToken,
+            auctionIndex,
+            amount,
+            dNum,
+            dDen,
+            kNum,
+            kDen
+        );
+        return shouldBuy;
+    }
+
 
     // --- Safe Math functions ---
     // (https://github.com/OpenZeppelin/openzeppelin-solidity/blob/master/contracts/math/SafeMath.sol)

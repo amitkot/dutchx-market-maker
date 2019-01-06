@@ -161,7 +161,10 @@ contract('KyberDxMarketMaker', async accounts => {
     dbg(`======================================`)
     dbg(`\n--- deployed ${kncSymbol}`)
 
-    await weth.deposit({ value: web3.utils.toWei(new BN(10000)), from: lister })
+    await weth.deposit({
+      value: web3.utils.toWei(new BN(10000)),
+      from: lister
+    })
     dbg(`\n--- prepared lister funds`)
     dbg(`lister has ${await weth.balanceOf(lister)} WETH`)
     dbg(`lister has ${await knc.balanceOf(lister)} ${kncSymbol}`)
@@ -2397,6 +2400,86 @@ contract('KyberDxMarketMaker', async accounts => {
       wethBalance.should.be.eq.BN(0)
       const kncBalance = await knc.balanceOf(dxmm.address)
       kncBalance.should.be.eq.BN(0)
+    })
+
+    it.only('auction in progress, price ready for buying -> should buy', async () => {
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+      await fundDxmmAndDepositToDxToken(knc)
+      await dxmm.triggerAuction(knc.address, weth.address, { from: operator })
+      const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+      await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
+
+      const amount = await dxmm.calculateAuctionBuyTokens(
+        knc.address,
+        weth.address,
+        auctionIndex,
+        dxmm.address
+      )
+
+      const waitUntilPriceIs0 = async (
+        sellToken,
+        buyToken,
+        auctionIndex,
+        amount
+      ) => {
+        let t = await blockChainTime()
+        let price = await dx.getCurrentAuctionPrice(
+          sellToken.address,
+          buyToken.address,
+          auctionIndex
+        )
+        dbg(`... at ${t} price is ${price.num / price.den}`)
+
+        await waitTimeInSeconds(24 * 60 * 60)
+
+        t = await blockChainTime()
+        price = await dx.getCurrentAuctionPrice(
+          sellToken.address,
+          buyToken.address,
+          auctionIndex
+        )
+        dbg(`... at ${t} price is ${price.num / price.den}`)
+        assert(price.num.eqn(0), 'price should be 0 by now')
+
+        const buyVolume = await dx.buyVolumes.call(
+          sellToken.address,
+          buyToken.address
+        )
+        const sellVolume = await dx.sellVolumesCurrent.call(
+          sellToken.address,
+          buyToken.address
+        )
+        const outstandingVolume = sellVolume
+          .mul(price.num)
+          .div(price.den)
+          .sub(buyVolume)
+
+        dbg(`buyVolume: ${buyVolume}`)
+        dbg(`sellVolume: ${sellVolume}`)
+        dbg(`outstandingVolume: ${outstandingVolume}`)
+      }
+
+      await waitUntilPriceIs0(knc, weth, auctionIndex, amount)
+
+      const res = await dxmm.magic(knc.address, weth.address, {
+        from: operator
+      })
+
+      truffleAssert.eventEmitted(res, 'BoughtInAuction', ev => {
+        return (
+          ev.sellToken === knc.address &&
+          ev.buyToken === weth.address &&
+          ev.auctionIndex.eq(auctionIndex) &&
+          ev.buyTokenAmount.eqn(0) &&
+          ev.clearedAuction === true
+        )
+      })
+
+      const newAuctionIndex = await dx.getAuctionIndex(
+        knc.address,
+        weth.address
+      )
+      newAuctionIndex.should.be.eq.BN(auctionIndex.addn(1))
     })
 
     it('several cycles')
