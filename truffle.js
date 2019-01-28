@@ -3,14 +3,16 @@ const assert = require('assert')
 
 const DEFAULT_GAS_PRICE_GWEI = 5
 const GAS_LIMIT = 6.5e6
-const DEFAULT_MNEMONIC = 'candy maple cake sugar pudding cream honey rich smooth crumble sweet treat'
+const DEFAULT_MNEMONIC =
+  'candy maple cake sugar pudding cream honey rich smooth crumble sweet treat'
 
-function truffleConfig ({
+function truffleConfig({
   mnemonic = DEFAULT_MNEMONIC,
   gasPriceGWei = DEFAULT_GAS_PRICE_GWEI,
   gas = GAS_LIMIT,
   optimizedEnabled = true,
   urlRinkeby = 'https://rinkeby.infura.io/',
+  urlKovan = 'https://kovan.infura.io/',
   urlMainnet = 'https://mainnet.infura.io',
   urlDevelopment = 'localhost',
   portDevelopment = 8545
@@ -47,15 +49,21 @@ function truffleConfig ({
         network_id: '4',
         gas,
         gasPrice
+      },
+      kovan: {
+        provider: _getProvider(urlKovan),
+        network_id: '8',
+        gas,
+        gasPrice
       }
     },
     // Native binary
     compilers: {
-        solc: {
-            // version: "native"
-            version: "0.4.24",
-            docker: true
-        }
+      solc: {
+        // version: "native"
+        version: '0.5.2',
+        docker: true
+      }
     },
     solc: {
       optimizer: {
@@ -66,5 +74,5 @@ function truffleConfig ({
 }
 
 module.exports = truffleConfig({
-  optimizedEnabled: true,
+  optimizedEnabled: true
 })

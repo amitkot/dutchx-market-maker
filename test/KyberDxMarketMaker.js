@@ -345,48 +345,93 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     return knc
   }
 
-  // TODO: get sellToken, buyToken
-  const triggerAuction = async (token, seller) => {
-    const tokenSymbol = await token.symbol()
-    let tokenSellAmount = await dxmm.calculateMissingTokenForAuctionStart(
-      token.address,
-      weth.address
-    )
-    dbg(`Missing amount without fee: ${tokenSellAmount}`)
+  // TODO: should this also fund?
+  const triggerAuction = async (sellToken, buyToken, seller) => {
+    const fundDespositSell = async (sellToken, buyToken) => {
+      const sellTokenSymbol = await sellToken.symbol()
+      const buyTokenSymbol = await buyToken.symbol()
+      dbg(`--- fundDepositSell(${sellTokenSymbol}, ${buyTokenSymbol})`)
+      let tokenSellAmount = await dxmm.calculateMissingTokenForAuctionStart(
+        sellToken.address,
+        buyToken.address
+      )
+      dbg(`Missing amount without fee: ${tokenSellAmount}`)
+      tokenSellAmount = await dxmm.addFee(tokenSellAmount)
+      dbg(`Missing amount with fee: ${tokenSellAmount}`)
 
-    tokenSellAmount = await dxmm.addFee(tokenSellAmount)
-    dbg(`Missing amount with fee: ${tokenSellAmount}`)
+      if (sellToken === weth) {
+        await sellToken.deposit({ value: tokenSellAmount, from: admin })
+      }
 
-    await token.transfer(seller, tokenSellAmount, { from: admin })
-    dbg(`\n--- seller now has ${await token.balanceOf(seller)} ${tokenSymbol}`)
+      await sellToken.transfer(seller, tokenSellAmount, { from: admin })
+      dbg(
+        `--- seller now has ${await sellToken.balanceOf(
+          seller
+        )} ${sellTokenSymbol}`
+      )
+
+      await sellToken.approve(dx.address, tokenSellAmount, { from: seller })
+      let res = await dx.depositAndSell.call(
+        sellToken.address,
+        buyToken.address,
+        tokenSellAmount,
+        { from: seller }
+      )
+      await dx.depositAndSell(
+        sellToken.address,
+        buyToken.address,
+        tokenSellAmount,
+        {
+          from: seller
+        }
+      )
+      dbg(
+        `--- seller called depositAndSell(${sellTokenSymbol}, ${buyTokenSymbol}): newBal: ${
+          res.newBal
+        }, auctionIndex: ${res.auctionIndex}, newSellerBal: ${res.newSellerBal}`
+      )
+      dbg(
+        `seller DX ${sellTokenSymbol} balance is ${await dx.balances(
+          sellToken.address,
+          seller
+        )}`
+      )
+    }
+
+    await fundDespositSell(sellToken, buyToken)
+    await fundDespositSell(buyToken, sellToken)
 
     dbg(
-      `next auction starts at ${await dx.getAuctionStart(
-        token.address,
-        weth.address
+      `Missing for 1'st direction: ${await dxmm.calculateMissingTokenForAuctionStart(
+        sellToken.address,
+        buyToken.address
+      )}`
+    )
+    dbg(
+      `Missing for 2'nd direction: ${await dxmm.calculateMissingTokenForAuctionStart(
+        buyToken.address,
+        sellToken.address
       )}`
     )
 
-    await token.approve(dx.address, tokenSellAmount, { from: seller })
-    let res = await dx.depositAndSell.call(
-      token.address,
-      weth.address,
-      tokenSellAmount,
-      { from: seller }
+    const nextAuctionStart = await dx.getAuctionStart(
+      sellToken.address,
+      buyToken.address
     )
-    await dx.depositAndSell(token.address, weth.address, tokenSellAmount, {
-      from: seller
-    })
-    dbg(
-      `\n--- seller called depositAndSell: newBal: ${
-        res.newBal
-      }, auctionIndex: ${res.auctionIndex}, newSellerBal: ${res.newSellerBal}`
-    )
-    dbg(`seller DX WETH balance is ${await dx.balances(weth.address, seller)}`)
-    dbg(`seller DX KNC balance is ${await dx.balances(token.address, seller)}`)
-    await dbgVolumesAndPrices(token, weth, res.auctionIndex)
+    dbg(`next auction starts at ${nextAuctionStart}`)
+    nextAuctionStart.should.not.be.eq.BN(1)
 
-    return res.auctionIndex
+    dbg(`sellToken.address: ${sellToken.address}`)
+    dbg(`buyToken.address: ${buyToken.address}`)
+    const auctionIndex = await dx.getAuctionIndex(
+      sellToken.address,
+      buyToken.address
+    )
+
+    await dbgVolumesAndPrices(sellToken, buyToken, auctionIndex)
+    await dbgVolumesAndPrices(buyToken, sellToken, auctionIndex)
+
+    return auctionIndex
   }
 
   const waitForTriggeredAuctionToStart = async (
@@ -447,39 +492,67 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     }
   }
 
-  const buyEverythingInAuction = async (knc, auctionIndex, buyer) => {
-    dbg(`\n--- buyer wants to buy everything`)
-    await dbgVolumesAndPrices(knc, weth, auctionIndex)
-    const remainingBuyVolume = await calculateRemainingBuyVolume(
-      knc,
-      weth,
-      auctionIndex
-    )
-    console.log('remainingBuyVolume:', remainingBuyVolume.toString())
-    let shouldBuyVolume = remainingBuyVolume.addn(1)
-    console.log('shouldBuyVolume:', shouldBuyVolume.toString())
-
-    await weth.deposit({ value: shouldBuyVolume, from: buyer })
-    await weth.approve(dx.address, shouldBuyVolume, { from: buyer })
-    await dx.deposit(weth.address, shouldBuyVolume, { from: buyer })
-    dbg(`buyer converted to WETH and deposited to DX`)
-    dbg(`buyer DX WETH balance is ${await dx.balances(weth.address, buyer)}`)
-
-    await dx.postBuyOrder(
-      knc.address,
-      weth.address,
+  const buyEverythingInAuction = async (
+    sellToken,
+    buyToken,
+    auctionIndex,
+    buyer
+  ) => {
+    const buyEverythingInDirection = async (
+      sellToken,
+      buyToken,
       auctionIndex,
-      shouldBuyVolume,
-      { from: buyer }
-    )
+      buyer
+    ) => {
+      dbg(`BEFORE BUYING EVERYTHING`)
+      await dbgVolumesAndPrices(sellToken, buyToken, auctionIndex)
+      const remainingBuyVolume = await calculateRemainingBuyVolume(
+        sellToken,
+        buyToken,
+        auctionIndex
+      )
+      console.log('remainingBuyVolume:', remainingBuyVolume.toString())
+      let shouldBuyVolume = remainingBuyVolume.addn(1)
+      console.log('shouldBuyVolume:', shouldBuyVolume.toString())
+
+      if (buyToken === weth) {
+        await buyToken.deposit({ value: shouldBuyVolume, from: buyer })
+      }
+      // TODO: maybe fund buyer in a better point in the code
+      await buyToken.transfer(buyer, shouldBuyVolume, { from: admin })
+      await buyToken.approve(dx.address, shouldBuyVolume, { from: buyer })
+      await dx.deposit(buyToken.address, shouldBuyVolume, { from: buyer })
+      const symbol = await buyToken.symbol()
+      dbg(`buyer deposited ${symbol} to DX`)
+      dbg(
+        `buyer DX ${symbol} balance is ${await dx.balances(
+          buyToken.address,
+          buyer
+        )}`
+      )
+
+      await dx.postBuyOrder(
+        sellToken.address,
+        buyToken.address,
+        auctionIndex,
+        shouldBuyVolume,
+        { from: buyer }
+      )
+      dbg(`AFTER BUYING EVERYTHING`)
+      await dbgVolumesAndPrices(sellToken, buyToken, auctionIndex)
+    }
+
+    dbg(`\n--- buyer wants to buy everything`)
+    await buyEverythingInDirection(sellToken, buyToken, auctionIndex, buyer)
+    await buyEverythingInDirection(buyToken, sellToken, auctionIndex, buyer)
   }
 
   const triggerAndClearAuction = async (sellToken, buyToken, user) => {
     // TODO: pass buyToken to helper functions
     dbg(`\n--- Triggerring and clearing new auction`)
-    const auctionIndex = await triggerAuction(sellToken, user)
+    const auctionIndex = await triggerAuction(sellToken, buyToken, user)
     await waitForTriggeredAuctionToStart(sellToken, buyToken, auctionIndex)
-    await buyEverythingInAuction(sellToken, auctionIndex, user)
+    await buyEverythingInAuction(sellToken, buyToken, auctionIndex, user)
 
     const state = await dxmm.getAuctionState(
       sellToken.address,
@@ -488,55 +561,74 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     state.should.be.eq.BN(NO_AUCTION_TRIGGERED)
   }
 
-  const dxmmTriggerAndClearAuction = async (sellToken, buyToken) => {
-    // Trigger an auction
-    await fundDxmmAndDepositToDxToken(sellToken)
+  const dxmmFundDepositTriggerBothSides = async (sellToken, buyToken) => {
+    // trigger: sellToken -> buyToken
+    await fundDxmmAndDepositToDx(sellToken)
     await dxmm.testTriggerAuction(sellToken.address, buyToken.address)
+
+    // trigger: buyToken -> sellToken
+    await fundDxmmAndDepositToDx(buyToken)
+    await dxmm.testTriggerAuction(buyToken.address, sellToken.address)
+  }
+
+  const dxmmTriggerAndClearAuction = async (sellToken, buyToken) => {
+    await dxmmFundDepositTriggerBothSides(sellToken, buyToken)
+
     const auctionIndex = await dx.getAuctionIndex(
       sellToken.address,
       buyToken.address
     )
 
-    // Wait for auction to start
     await waitForTriggeredAuctionToStart(sellToken, buyToken, auctionIndex)
 
-    // Buy in auction
-    await fundDxmmAndDepositToDxWethForAuction(
+    // buy: sell -> buy
+    await fundDxmmAndDepositToDxToBuyInAuction(
       sellToken,
       buyToken,
       auctionIndex
     )
     await dxmm.testBuyInAuction(sellToken.address, buyToken.address)
 
+    // buy: buy -> sell
+    await fundDxmmAndDepositToDxToBuyInAuction(
+      buyToken,
+      sellToken,
+      auctionIndex
+    )
+    await dxmm.testBuyInAuction(buyToken.address, sellToken.address)
+
     return auctionIndex
   }
 
-  const fundDxmmAndDepositToDxToken = async token => {
-    const amount = web3.utils.toWei(new BN(100000000))
+  const fundDxmmAndDepositToDx = async (token, amount = null) => {
+    if (amount === null) {
+      amount = web3.utils.toWei(new BN(100000))
+    }
     dbg(
       `Funding dxmm with ${amount} ${await token.symbol.call()} and depositing to DX`
     )
+    if (token === weth) {
+      await weth.deposit({ value: amount, from: admin })
+    }
     await token.transfer(dxmm.address, amount, { from: admin })
     await dxmm.depositToDx(token.address, amount, { from: operator })
   }
 
-  const fundDxmmAndDepositToDxWethForAuction = async (
-    knc,
-    weth,
+  const fundDxmmAndDepositToDxToBuyInAuction = async (
+    sellToken,
+    buyToken,
     auctionIndex
   ) => {
-    // This is more WETH than will eventually be required as the rate
+    // This is more buyToken than will eventually be required as the rate
     // improves block by block and we waste a couple of blocks in These
     // deposits
-    const tokensToBuy = await dxmm.calculateAuctionBuyTokens(
-      knc.address,
-      weth.address,
+    const tokenWeiToBuy = await dxmm.calculateAuctionBuyTokens(
+      sellToken.address,
+      buyToken.address,
       auctionIndex,
       dxmm.address
     )
-    await weth.deposit({ value: tokensToBuy, from: admin })
-    await weth.transfer(dxmm.address, tokensToBuy, { from: admin })
-    await dxmm.depositToDx(weth.address, tokensToBuy, { from: operator })
+    await fundDxmmAndDepositToDx(buyToken, tokenWeiToBuy)
   }
 
   before('setup accounts', async () => {
@@ -569,7 +661,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
   it('seller can sell KNC and buyer can buy it', async () => {
     const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-    const auctionIndex = await triggerAuction(knc, seller1)
+    const auctionIndex = await triggerAuction(knc, weth, seller1)
     await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
     // now check if buyer wants to buyAmount
@@ -580,7 +672,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     await waitUntilKyberPriceReached(knc, weth, auctionIndex, 10000)
 
     // Buyer buys everything
-    await buyEverythingInAuction(knc, auctionIndex, buyer1)
+    await buyEverythingInAuction(knc, weth, auctionIndex, buyer1)
 
     dbg(`\n--- buyer bought everything`)
     await dbgVolumesAndPrices(knc, weth, auctionIndex)
@@ -593,22 +685,35 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     dbg(`is auction still open? ${currentAuctionIndex.eq(auctionIndex)}`)
     currentAuctionIndex.should.not.eq.BN(auctionIndex)
 
-    dbg(
-      `dx.claimBuyerFunds(${knc.address}, ${
-        weth.address
-      }, ${buyer1}, ${auctionIndex})`
-    )
-    await dx.claimBuyerFunds(knc.address, weth.address, buyer1, auctionIndex, {
-      from: buyer1
-    })
-    dbg(`\n--- buyer claimed the KNC`)
-    const kncBalance = await dx.balances(knc.address, buyer1)
-    dbg(`buyer DX KNC balance is ${kncBalance}`)
-    dbg(`buyer DX WETH balance is ${await dx.balances(weth.address, buyer1)}`)
+    const buyerClaim = async (sellToken, buyToken) => {
+      dbg(
+        `dx.claimBuyerFunds(${sellToken.address}, ${
+          buyToken.address
+        }, ${buyer1}, ${auctionIndex})`
+      )
+      await dx.claimBuyerFunds(
+        sellToken.address,
+        buyToken.address,
+        buyer1,
+        auctionIndex,
+        {
+          from: buyer1
+        }
+      )
+      const symbol = await sellToken.symbol()
+      const sellBalance = await dx.balances(sellToken.address, buyer1)
+      dbg(
+        `\n--- buyer claimed the ${symbol}, their DX balance is ${sellBalance}`
+      )
 
-    await dx.withdraw(knc.address, kncBalance, { from: buyer1 })
-    dbg(`\n--- buyer withdrew all of the KNC`)
+      await dx.withdraw(sellToken.address, sellBalance, { from: buyer1 })
+      dbg(`\n--- buyer withdrew all of the ${symbol}`)
+    }
+    await buyerClaim(knc, weth)
+    await buyerClaim(weth, knc)
+
     dbg(`buyer KNC balance is ${await knc.balanceOf(buyer1)}`)
+    dbg(`buyer WETH balance is ${await weth.balanceOf(buyer1)}`)
     dbg(`buyer DX KNC balance is ${await dx.balances(knc.address, buyer1)}`)
     dbg(`buyer DX WETH balance is ${await dx.balances(weth.address, buyer1)}`)
 
@@ -619,22 +724,32 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     dbg(`seller KNC balance is ${await knc.balanceOf(seller1)}`)
     dbg(`seller DX KNC balance is ${await dx.balances(knc.address, seller1)}`)
 
-    await dx.claimSellerFunds(
-      knc.address,
-      weth.address,
-      seller1,
-      auctionIndex,
-      { from: seller1 }
-    )
-    const wethBalance = await dx.balances(weth.address, seller1)
-    dbg(`after claiming:`)
+    const sellerClaim = async (sellToken, buyToken) => {
+      await dx.claimSellerFunds(
+        sellToken.address,
+        buyToken.address,
+        seller1,
+        auctionIndex,
+        { from: seller1 }
+      )
+    }
+    await sellerClaim(knc, weth)
+    await sellerClaim(weth, knc)
+
+    dbg(`\nafter claiming:`)
     dbg(`seller WETH balance is ${await weth.balanceOf(seller1)}`)
-    dbg(`seller DX WETH balance is ${wethBalance}`)
+    dbg(`seller DX WETH balance is ${await dx.balances(weth.address, seller1)}`)
     dbg(`seller KNC balance is ${await knc.balanceOf(seller1)}`)
     dbg(`seller DX KNC balance is ${await dx.balances(knc.address, seller1)}`)
 
-    await dx.withdraw(weth.address, wethBalance, { from: seller1 })
-    dbg(`after withdrawing:`)
+    const sellerWithdraw = async (sellToken, buyToken) => {
+      const balance = await dx.balances(buyToken.address, seller1)
+      await dx.withdraw(buyToken.address, balance, { from: seller1 })
+    }
+    await sellerWithdraw(knc, weth)
+    await sellerWithdraw(weth, knc)
+
+    dbg(`\nafter withdrawing:`)
     dbg(`seller WETH balance is ${await weth.balanceOf(seller1)}`)
     dbg(`seller DX WETH balance is ${await dx.balances(weth.address, seller1)}`)
     dbg(`seller KNC balance is ${await knc.balanceOf(seller1)}`)
@@ -831,7 +946,19 @@ contract('TestingKyberDxMarketMaker', async accounts => {
   })
 
   describe('missing tokens to next auction', () => {
-    it('calculate missing tokens in wei to start next auction', async () => {
+    it('thresholdNewAuctionToken works correctly for ETH', async () => {
+      const dxPriceOracle = await PriceOracleInterface.at(
+        await dx.ethUSDOracle()
+      )
+      const usdEthPrice = await dxPriceOracle.getUSDETHPrice.call()
+      const auctionUsdThreshold = await dx.thresholdNewAuction()
+
+      const dxmmEthThreshold = await dxmm.thresholdNewAuctionToken(weth.address)
+
+      dxmmEthThreshold.should.be.eq.BN(auctionUsdThreshold.div(usdEthPrice))
+    })
+
+    it('calculate missing tokens in wei to start next auction: sellToken is KNC', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
       const missingInWei = await dxmm.calculateMissingTokenForAuctionStart.call(
@@ -841,6 +968,20 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
       const thresholdTokenWei = await dxmm.thresholdNewAuctionToken.call(
         knc.address
+      )
+      missingInWei.should.be.eq.BN(thresholdTokenWei)
+    })
+
+    it('calculate missing tokens in wei to start next auction: sellToken is WETH', async () => {
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+      const missingInWei = await dxmm.calculateMissingTokenForAuctionStart.call(
+        weth.address,
+        knc.address
+      )
+
+      const thresholdTokenWei = await dxmm.thresholdNewAuctionToken.call(
+        weth.address
       )
       missingInWei.should.be.eq.BN(thresholdTokenWei)
     })
@@ -873,7 +1014,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('auction is in progress - missing amount to start auction is 0', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
 
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
@@ -888,7 +1029,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('auction triggered, had not started - missing amount to start auction is 0', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      await triggerAuction(knc, seller1)
+      await triggerAuction(knc, weth, seller1)
 
       const missingInWei = await dxmm.calculateMissingTokenForAuctionStart.call(
         knc.address,
@@ -901,11 +1042,11 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('auction started, everything bought, waiting for next auction to trigger - missing amount to start auction is threshold', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       // Buyer buys everything
-      await buyEverythingInAuction(knc, auctionIndex, buyer1)
+      await buyEverythingInAuction(knc, weth, auctionIndex, buyer1)
 
       const missingInWei = await dxmm.calculateMissingTokenForAuctionStart.call(
         knc.address,
@@ -930,7 +1071,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('auction triggered, waiting for it to start', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      await triggerAuction(knc, seller1)
+      await triggerAuction(knc, weth, seller1)
 
       const state = await dxmm.getAuctionState(knc.address, weth.address)
       state.should.be.eq.BN(AUCTION_TRIGGERED_WAITING)
@@ -939,7 +1080,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('auction in progress', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       const state = await dxmm.getAuctionState(knc.address, weth.address)
@@ -949,9 +1090,9 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('after auction ended', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
-      await buyEverythingInAuction(knc, auctionIndex, buyer1)
+      await buyEverythingInAuction(knc, weth, auctionIndex, buyer1)
 
       const state = await dxmm.getAuctionState(knc.address, weth.address)
       state.should.be.eq.BN(NO_AUCTION_TRIGGERED)
@@ -980,7 +1121,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         knc.address
       )
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       const tokensSoldInCurrentAuction = await dxmm.tokensSoldInCurrentAuction(
@@ -1005,7 +1146,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
       const seller1TokenSellAmount = auctionTokenSellAmount.subn(10000)
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       const tokensSoldInCurrentAuction = await dxmm.tokensSoldInCurrentAuction(
@@ -1025,7 +1166,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         knc.address
       )
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
 
       const tokensSoldInCurrentAuction = await dxmm.tokensSoldInCurrentAuction(
         knc.address /* sellToken */,
@@ -1055,7 +1196,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('auction in progress, single seller, single buyer, calculation as expected', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       const expectedBuyTokens = await calculateRemainingBuyVolume(
@@ -1077,7 +1218,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('auction in progress, single seller, single buyer, successfully buy calculated amount', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       const balanceBefore = await dx.balances.call(weth.address, seller1)
@@ -1118,10 +1259,12 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('auction in progress, single seller, multiple buyers', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
-      const expectedBuyTokens = await calculateRemainingBuyVolume(
+      dbg(`Before: web3.eth.blockNumber is ${await web3.eth.getBlockNumber()}`)
+      await Helper.sendPromise('miner_stop', [])
+      const expectedBuyTokensPromise = calculateRemainingBuyVolume(
         knc,
         weth,
         auctionIndex
@@ -1130,14 +1273,27 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       // Note: this action is composed of a number of function calls, so a
       // couple of blocks may pass which might change the auction prices
       // and leave some WETH in the balance after buying.
-      await buyAuctionTokens(knc, auctionIndex, 10000, user, true)
+      const buyAuctionTokensPromise = buyAuctionTokens(
+        knc,
+        auctionIndex,
+        10000,
+        user,
+        true
+      )
 
-      const calculatedBuyTokens = await dxmm.calculateAuctionBuyTokens.call(
+      const calculatedBuyTokensPromise = dxmm.calculateAuctionBuyTokens.call(
         knc.address /* sellToken */,
         weth.address /* buyToken */,
         auctionIndex /* auctionIndex */,
         seller1 /* account */
       )
+
+      dbg(`After: web3.eth.blockNumber is ${await web3.eth.getBlockNumber()}`)
+      await Helper.sendPromise('miner_start', [])
+
+      const expectedBuyTokens = await expectedBuyTokensPromise
+      await buyAuctionTokensPromise
+      const calculatedBuyTokens = await calculatedBuyTokensPromise
 
       calculatedBuyTokens.should.be.eq.BN(expectedBuyTokens.subn(10000))
     })
@@ -1158,7 +1314,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
       const seller1TokenSellAmount = auctionTokenSellAmount.subn(1000000)
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       // Calculate expected buy volume based on the amount sold by seller1
@@ -1211,7 +1367,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
       const seller1TokenSellAmount = auctionTokenSellAmount.subn(1000000)
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       // Calculate expected buy volume based on the amount sold by seller1
@@ -1275,7 +1431,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('using calculated buy amount', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       const calculatedBuyTokens = await dxmm.calculateAuctionBuyTokens.call(
@@ -1298,7 +1454,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('using less than calculated buy amount', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       const calculatedBuyTokens = await dxmm.calculateAuctionBuyTokens.call(
@@ -1321,7 +1477,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('using more than calculated buy amount', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       const calculatedBuyTokens = await dxmm.calculateAuctionBuyTokens.call(
@@ -1347,7 +1503,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       // Other sellers sells KNC in auction
       await sellTokens(knc, 10000, user)
 
-      const auctionIndex = await triggerAuction(knc, seller1)
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       const calculatedBuyTokens = await dxmm.calculateAuctionBuyTokens.call(
@@ -1402,7 +1558,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     dxmmValue.should.be.equal(kyberValue)
   })
 
-  it.only('kyber rates provided only for 18 decimals sell tokens', async () => {
+  it('kyber rates provided only for 18 decimals sell tokens', async () => {
     const token9Decimals = await deployTokenVarialbeDecimals(9)
 
     await truffleAssert.reverts(
@@ -1411,7 +1567,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     )
   })
 
-  it.only('kyber rates provided only for 18 decimals buy tokens', async () => {
+  it('kyber rates provided only for 18 decimals buy tokens', async () => {
     const token9Decimals = await deployTokenVarialbeDecimals(9)
 
     await truffleAssert.reverts(
@@ -1916,7 +2072,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
     it('should fail if auction not in progress (triggered, waiting)', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      await triggerAuction(knc, user)
+      await triggerAuction(knc, weth, user)
 
       await truffleAssert.reverts(
         dxmm.testBuyInAuction(knc.address, weth.address),
@@ -1927,7 +2083,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('should buy nothing if nothing sold (other user triggered auction)', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      const auctionIndex = await triggerAuction(knc, user)
+      const auctionIndex = await triggerAuction(knc, weth, user)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
       const buyerBalanceBefore = await dx.buyerBalances(
         knc.address,
@@ -1951,9 +2107,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('should buy the amount of sold tokens in auction', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      await fundDxmmAndDepositToDxToken(knc)
-
-      await dxmm.testTriggerAuction(knc.address, weth.address)
+      await dxmmFundDepositTriggerBothSides(knc, weth)
 
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
@@ -1963,15 +2117,14 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         auctionIndex,
         dxmm.address
       )
-      dbg(`%%% balance before is ${buyerBalanceBefore} (should be 0)`)
 
       // This is more WETH than will eventually be required as the rate
       // improves block by block and we waste a couple of blocks in These
       // deposits
-      await fundDxmmAndDepositToDxWethForAuction(knc, weth, auctionIndex)
+      await fundDxmmAndDepositToDxToBuyInAuction(knc, weth, auctionIndex)
 
       // Rate lowers as time goes by
-      const updatedTokensToBuy = await dxmm.calculateAuctionBuyTokens.call(
+      const tokenWeiToBuy = await dxmm.calculateAuctionBuyTokens.call(
         knc.address,
         weth.address,
         auctionIndex,
@@ -1980,6 +2133,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       const bought = await dxmm.testBuyInAuction.call(knc.address, weth.address)
       await dxmm.testBuyInAuction(knc.address, weth.address)
 
+      buyerBalanceBefore.should.be.eq.BN(0)
       bought.should.be.true
       const buyerBalanceAfter = await dx.buyerBalances(
         knc.address,
@@ -1987,39 +2141,46 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         auctionIndex,
         dxmm.address
       )
-      buyerBalanceAfter.should.be.eq.BN(
-        buyerBalanceBefore.add(updatedTokensToBuy)
-      )
+      buyerBalanceAfter.should.be.eq.BN(tokenWeiToBuy)
     })
 
     it('should emit event with amount bought', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      await fundDxmmAndDepositToDxToken(knc)
-
-      await dxmm.testTriggerAuction(knc.address, weth.address)
+      await dxmmFundDepositTriggerBothSides(knc, weth)
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
-      const buyerBalanceBefore = await dx.buyerBalances(
-        knc.address,
-        weth.address,
-        auctionIndex,
-        dxmm.address
-      )
 
       // This is more WETH than will eventually be required as the rate
       // improves block by block and we waste a couple of blocks in These
       // deposits
-      await fundDxmmAndDepositToDxWethForAuction(knc, weth, auctionIndex)
+      await fundDxmmAndDepositToDxToBuyInAuction(knc, weth, auctionIndex)
 
       // Rate lowers as time goes by
-      const buyTokenAmount = await dxmm.calculateAuctionBuyTokens(
+      dbg(
+        `Before stop: web3.eth.blockNumber is ${await web3.eth.getBlockNumber()}`
+      )
+      await Helper.sendPromise('miner_stop', [])
+      const buyTokenAmount = await dxmm.calculateAuctionBuyTokens.call(
         knc.address,
         weth.address,
         auctionIndex,
         dxmm.address
       )
-      const res = await dxmm.testBuyInAuction(knc.address, weth.address)
+      dbg(
+        `Before buyInAuction call: web3.eth.blockNumber is ${await web3.eth.getBlockNumber()}`
+      )
+      // const res = await dxmm.testBuyInAuction(knc.address, weth.address)
+      const p = dxmm.testBuyInAuction(knc.address, weth.address)
+      dbg(
+        `After buyInAuction call started: web3.eth.blockNumber is ${await web3.eth.getBlockNumber()}`
+      )
+      await Helper.sendPromise('miner_start', [])
+
+      const res = await p
+      dbg(
+        `After buyInAuction call finished: web3.eth.blockNumber is ${await web3.eth.getBlockNumber()}`
+      )
 
       dbg(`%%% ev.sellToken === ${knc.address}`)
       dbg(`%%% ev.buyToken === ${weth.address}`)
@@ -2040,7 +2201,11 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it("should fail if doesn't have enough WETH to buy sold amount", async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      // Initialize dxmm WETH balance
+      await dxmmFundDepositTriggerBothSides(knc, weth)
+      const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+      await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
+
+      // Make sure dxmm does not have enough WETH to buy
       const dxBalance = await dx.balances(weth.address, dxmm.address)
       dbg(`%%% dxmm balance on dx: ${dxBalance}`)
       await dxmm.withdrawFromDx(weth.address, dxBalance, { from: operator })
@@ -2052,18 +2217,13 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       )
       const wethBalance = await weth.balanceOf(dxmm.address)
       dbg(`%%% dxmm WETH balance: ${wethBalance}`)
-      // keep 1 ETH for gas?
+      // keep 1 ETH for gas
       const withdrawAmount = wethBalance.subn(1)
       dbg(`%%% dxmm withdraw amount: ${withdrawAmount}`)
       await dxmm.withdrawToken(weth.address, withdrawAmount, admin, {
         from: admin
       })
       dbg(`%%% dxmm balance after: ${await weth.balanceOf(dxmm.address)}`)
-
-      await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.testTriggerAuction(knc.address, weth.address)
-      const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
-      await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       await truffleAssert.reverts(
         dxmm.testBuyInAuction(knc.address, weth.address),
@@ -2075,7 +2235,12 @@ contract('TestingKyberDxMarketMaker', async accounts => {
   describe('trigger auctions', () => {
     it('deposit and trigger auction', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      await fundDxmmAndDepositToDxToken(knc)
+
+      // Prepare the opposite direction first
+      await fundDxmmAndDepositToDx(weth)
+      await dxmm.testTriggerAuction(weth.address, knc.address)
+
+      await fundDxmmAndDepositToDx(knc)
 
       const triggered = await dxmm.testTriggerAuction.call(
         knc.address,
@@ -2101,9 +2266,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
     it('fail if auction has already been triggered and waiting to start', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      await fundDxmmAndDepositToDxToken(knc)
-
-      await triggerAuction(knc, user)
+      await dxmmFundDepositTriggerBothSides(knc, weth)
 
       const triggered = await dxmm.testTriggerAuction.call(
         knc.address,
@@ -2115,9 +2278,8 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
     it('fail if auction is in progress', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      await fundDxmmAndDepositToDxToken(knc)
-
-      const auctionIndex = await triggerAuction(knc, user)
+      await dxmmFundDepositTriggerBothSides(knc, weth)
+      const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
       const triggered = await dxmm.testTriggerAuction.call(
@@ -2130,7 +2292,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
     it('should emit event with triggered auction info', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      await fundDxmmAndDepositToDxToken(knc)
+      await fundDxmmAndDepositToDx(knc)
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       const missingTokens = await dxmm.calculateMissingTokenForAuctionStart(
         knc.address,
@@ -2153,7 +2315,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     })
   })
 
-  describe.only('unified flow', () => {
+  describe('unified flow', () => {
     const hasDxPriceReachedKyber = async (
       sellToken,
       buyToken,
@@ -2194,7 +2356,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
     it('no auction in progress or planned - action required', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      await fundDxmmAndDepositToDxToken(knc)
+      await fundDxmmAndDepositToDx(knc)
 
       const actionRequired = await dxmm.step.call(knc.address, weth.address, {
         from: operator
@@ -2205,7 +2367,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
     it('no auction in progress or planned - trigger auction', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      await fundDxmmAndDepositToDxToken(knc)
+      await fundDxmmAndDepositToDx(knc)
 
       const res = await dxmm.step(knc.address, weth.address, {
         from: operator
@@ -2244,8 +2406,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
     it('auction already triggered, waiting - no action required', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.testTriggerAuction(knc.address, weth.address)
+      await dxmmFundDepositTriggerBothSides(knc, weth)
 
       const actionRequired = await dxmm.step.call(knc.address, weth.address, {
         from: operator
@@ -2256,8 +2417,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
     it('auction already triggered, waiting - no action performed', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.testTriggerAuction(knc.address, weth.address)
+      await dxmmFundDepositTriggerBothSides(knc, weth)
 
       const res = await dxmm.step(knc.address, weth.address, {
         from: operator
@@ -2271,8 +2431,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
     it('auction in progress but price not ready for buying, waiting - nothing to do', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.testTriggerAuction(knc.address, weth.address)
+      await dxmmFundDepositTriggerBothSides(knc, weth)
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
@@ -2306,8 +2465,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
     it('auction in progress but price not ready for buying, waiting - no action performed', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.testTriggerAuction(knc.address, weth.address)
+      await dxmmFundDepositTriggerBothSides(knc, weth)
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
       const priceReachedKyber = await hasDxPriceReachedKyber(
@@ -2329,8 +2487,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
     it('auction in progress, price ready for buying -> should buy', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.testTriggerAuction(knc.address, weth.address)
+      await dxmmFundDepositTriggerBothSides(knc, weth)
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
@@ -2357,8 +2514,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
     it('auction in progress, price ready for buying -> bought and cleared auction', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.testTriggerAuction(knc.address, weth.address)
+      await dxmmFundDepositTriggerBothSides(knc, weth)
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
@@ -2376,7 +2532,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       )
       priceReachedKyber.should.be.true
 
-      await fundDxmmAndDepositToDxWethForAuction(knc, weth, auctionIndex)
+      await fundDxmmAndDepositToDxToBuyInAuction(knc, weth, auctionIndex)
 
       const res = await dxmm.step(knc.address, weth.address, {
         from: operator
@@ -2394,32 +2550,9 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       state.should.be.eq.BN(NO_AUCTION_TRIGGERED)
     })
 
-    it('magic deposits all token balance to dx', async () => {
-      const knc = await deployTokenAddToDxAndClearFirstAuction()
-
-      await fundDxmmAndDepositToDxToken(knc)
-
-      const amount = web3.utils.toWei(new BN(10).pow(new BN(6)))
-
-      // transfer KNC
-      await knc.transfer(dxmm.address, amount, { from: admin })
-
-      // transfer WETH
-      await weth.deposit({ value: amount, from: admin })
-      await weth.transfer(dxmm.address, amount, { from: admin })
-
-      await dxmm.step(knc.address, weth.address, { from: operator })
-
-      const wethBalance = await weth.balanceOf(dxmm.address)
-      wethBalance.should.be.eq.BN(0)
-      const kncBalance = await knc.balanceOf(dxmm.address)
-      kncBalance.should.be.eq.BN(0)
-    })
-
     it('auction in progress, price ready for buying -> should buy', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      await fundDxmmAndDepositToDxToken(knc)
-      await dxmm.testTriggerAuction(knc.address, weth.address)
+      await dxmmFundDepositTriggerBothSides(knc, weth)
       const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
       await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
 
@@ -2484,8 +2617,11 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       newAuctionIndex.should.be.eq.BN(auctionIndex.addn(1))
     })
 
-    it('magic deposits all token balance to dx', async () => {
+    it('should deposit all token balance to dx', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+      await fundDxmmAndDepositToDx(knc)
+
       const amount = web3.utils.toWei(new BN(10).pow(new BN(6)))
 
       // transfer KNC
@@ -2497,11 +2633,11 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
       await dxmm.step(knc.address, weth.address, { from: operator })
 
-      const kncBalance = await knc.balanceOf(dxmm.address)
       const wethBalance = await weth.balanceOf(dxmm.address)
+      const kncBalance = await knc.balanceOf(dxmm.address)
 
-      kncBalance.should.be.eq.BN(0)
       wethBalance.should.be.eq.BN(0)
+      kncBalance.should.be.eq.BN(0)
     })
 
     it('Support only Tokens with 18 decimals for sellToken', async () => {

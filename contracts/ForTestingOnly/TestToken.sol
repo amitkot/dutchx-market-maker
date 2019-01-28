@@ -1,4 +1,4 @@
-pragma solidity ^0.4.24;
+pragma solidity 0.5.2;
 
 
 /* all this file is based on code from open zepplin
@@ -174,7 +174,7 @@ contract TestToken is StandardToken {
     uint public decimals = 18;
     uint public INITIAL_SUPPLY = 10**(50+18);
 
-    constructor(string _name, string _symbol, uint _decimals) public {
+    constructor(string memory _name, string memory _symbol, uint _decimals) public {
         totalSupply = INITIAL_SUPPLY;
         balances[msg.sender] = INITIAL_SUPPLY;
         name = _name;

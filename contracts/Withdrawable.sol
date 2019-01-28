@@ -1,4 +1,4 @@
-pragma solidity ^0.4.24;
+pragma solidity 0.5.2;
 
 
 import "./ERC20Interface.sol";
@@ -36,7 +36,7 @@ contract Withdrawable is PermissionGroups {
     /**
      * @dev Withdraw Ethers
      */
-    function withdrawEther(uint amount, address sendTo) external onlyAdmin {
+    function withdrawEther(uint amount, address payable sendTo) external onlyAdmin {
         sendTo.transfer(amount);
         emit EtherWithdraw(amount, sendTo);
     }

@@ -1,4 +1,4 @@
-pragma solidity ^0.4.24;
+pragma solidity 0.5.2;
 
 import "../KyberDxMarketMaker.sol";
 
@@ -14,8 +14,8 @@ contract TestingKyberDxMarketMaker is KyberDxMarketMaker {
     }
 
     function testTriggerAuction(
-        ERC20 sellToken,
-        ERC20 buyToken
+        address sellToken,
+        address buyToken
     )
         public
         returns (bool)
@@ -24,8 +24,8 @@ contract TestingKyberDxMarketMaker is KyberDxMarketMaker {
     }
 
     function testBuyInAuction(
-        ERC20 sellToken,
-        ERC20 buyToken
+        address sellToken,
+        address buyToken
     )
         public
         returns (bool bought)

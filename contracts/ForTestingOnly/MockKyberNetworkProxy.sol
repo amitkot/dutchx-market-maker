@@ -1,4 +1,4 @@
-pragma solidity ^0.4.23;
+pragma solidity 0.5.2;
 
 import "../ERC20Interface.sol";
 
@@ -6,7 +6,7 @@ import "../ERC20Interface.sol";
 contract MockKyberNetworkProxy {
     uint public fixedRate;
 
-    constructor(uint _fixedRate) {
+    constructor(uint _fixedRate) public {
         fixedRate = _fixedRate;
     }
 
@@ -14,6 +14,11 @@ contract MockKyberNetworkProxy {
         public
         view
         returns (uint expectedRate, uint slippageRate) {
+            // Removing compilation warnings
+            src;
+            dest;
+            srcQty;
+
             return (fixedRate, 0);
         }
 }

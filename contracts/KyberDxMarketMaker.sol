@@ -1,4 +1,4 @@
-pragma solidity ^0.4.24;
+pragma solidity 0.5.2;
 
 import "./ERC20Interface.sol";
 import "./Withdrawable.sol";
@@ -8,14 +8,9 @@ import "@gnosis.pm/util-contracts/contracts/EtherToken.sol";
 
 interface KyberNetworkProxy {
     function getExpectedRate(ERC20 src, ERC20 dest, uint srcQty)
-        public
+        external
         view
         returns (uint expectedRate, uint slippageRate);
-}
-
-
-interface DxPriceOracleInterface {
-    function getUSDETHPrice() public view returns (uint256);
 }
 
 
@@ -66,31 +61,31 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     event AmountDepositedToDx(
-        ERC20 indexed token,
+        address indexed token,
         uint amount
     );
 
     function depositToDx(
-        ERC20 token,
+        address token,
         uint amount
     )
         public
         onlyOperator
         returns (uint)
     {
-        require(ERC20(token).approve(dx, amount), "Cannot approve deposit");
+        require(ERC20(token).approve(address(dx), amount), "Cannot approve deposit");
         uint deposited = dx.deposit(token, amount);
         emit AmountDepositedToDx(token, deposited);
         return deposited;
     }
 
     event AmountWithdrawnFromDx(
-        ERC20 indexed token,
+        address indexed token,
         uint amount
     );
 
     function withdrawFromDx(
-        ERC20 token,
+        address token,
         uint amount
     )
         public
@@ -103,8 +98,8 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     event AuctionTokensClaimed(
-        ERC20 indexed sellToken,
-        ERC20 indexed buyToken,
+        address indexed sellToken,
+        address indexed buyToken,
         uint previousLastCompletedAuction,
         uint newLastCompletedAuction,
         uint sellerFunds,
@@ -112,8 +107,8 @@ contract KyberDxMarketMaker is Withdrawable {
     );
 
     function claimAuctionTokens(
-        ERC20 sellToken,
-        ERC20 buyToken
+        address sellToken,
+        address buyToken
     )
         public
         returns (uint sellerFunds, uint buyerFunds)
@@ -121,7 +116,7 @@ contract KyberDxMarketMaker is Withdrawable {
         uint initialLastClaimed = lastClaimedAuction[sellToken][buyToken];
 
         uint lastCompletedAuction = dx.getAuctionIndex(sellToken, buyToken) - 1;
-        if (lastCompletedAuction <= initialLastClaimed) return;
+        if (lastCompletedAuction <= initialLastClaimed) return (0, 0);
 
         uint amount;
         for (uint i = lastClaimedAuction[sellToken][buyToken] + 1; i <= lastCompletedAuction; i++) {
@@ -155,8 +150,8 @@ contract KyberDxMarketMaker is Withdrawable {
     */
     // TODO: consider removing onlyOperator limitation
     function step(
-        ERC20 sellToken,
-        ERC20 buyToken
+        address sellToken,
+        address buyToken
     )
         public
         onlyOperator
@@ -168,7 +163,7 @@ contract KyberDxMarketMaker is Withdrawable {
         // have 18 decimals and is handled as though it is rate / 10**18.
         // TODO: handle tokens with number of decimals other than 18.
         require(
-            sellToken.decimals() == 18 && buyToken.decimals() == 18,
+            ERC20(sellToken).decimals() == 18 && ERC20(buyToken).decimals() == 18,
             "Only 18 decimals tokens are supported"
         );
 
@@ -202,8 +197,8 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     function willAmountClearAuction(
-        ERC20 sellToken,
-        ERC20 buyToken,
+        address sellToken,
+        address buyToken,
         uint auctionIndex,
         uint amount
     )
@@ -246,7 +241,7 @@ contract KyberDxMarketMaker is Withdrawable {
 
     // TODO: consider adding a "safety margin" to compensate for accuracy issues.
     function thresholdNewAuctionToken(
-        ERC20 token
+        address token
     )
         public
         view
@@ -256,10 +251,7 @@ contract KyberDxMarketMaker is Withdrawable {
         uint priceTokenDen;
         (priceTokenNum, priceTokenDen) = dx.getPriceOfTokenInLastAuction(token);
 
-        DxPriceOracleInterface priceOracle = DxPriceOracleInterface(
-            dx.ethUSDOracle()
-        );
-
+        // TODO: maybe not add 1 if token is WETH
         // Rounding up to make sure we pass the threshold
         return 1 + div(
             // mul() takes care of overflows
@@ -268,15 +260,15 @@ contract KyberDxMarketMaker is Withdrawable {
                 priceTokenDen
             ),
             mul(
-                priceOracle.getUSDETHPrice(),
+                dx.ethUSDOracle().getUSDETHPrice(),
                 priceTokenNum
             )
         );
     }
 
     function calculateMissingTokenForAuctionStart(
-        ERC20 sellToken,
-        ERC20 buyToken
+        address sellToken,
+        address buyToken
     )
         public
         view
@@ -311,8 +303,8 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     function getAuctionState(
-        ERC20 sellToken,
-        ERC20 buyToken
+        address sellToken,
+        address buyToken
     )
         public
         view
@@ -332,8 +324,8 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     function getKyberRate(
-        ERC20 _sellToken,
-        ERC20 _buyToken,
+        address _sellToken,
+        address _buyToken,
         uint amount
     )
         public
@@ -346,13 +338,13 @@ contract KyberDxMarketMaker is Withdrawable {
         // have 18 decimals and is handled as though it is rate / 10**18.
         // TODO: handle tokens with number of decimals other than 18.
         require(
-            _sellToken.decimals() == 18 && _buyToken.decimals() == 18,
+            ERC20(_sellToken).decimals() == 18 && ERC20(_buyToken).decimals() == 18,
             "Only 18 decimals tokens are supported"
         );
 
         // Kyber uses a special constant address for representing ETH.
-        ERC20 sellToken = address(_sellToken) == address(weth) ? KYBER_ETH_TOKEN : _sellToken;
-        ERC20 buyToken = address(_buyToken) == address(weth) ? KYBER_ETH_TOKEN : _buyToken;
+        ERC20 sellToken = _sellToken == address(weth) ? KYBER_ETH_TOKEN : ERC20(_sellToken);
+        ERC20 buyToken = _buyToken == address(weth) ? KYBER_ETH_TOKEN : ERC20(_buyToken);
         uint rate;
         (rate, ) = kyberNetworkProxy.getExpectedRate(
             sellToken,
@@ -364,8 +356,8 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     function tokensSoldInCurrentAuction(
-        ERC20 sellToken,
-        ERC20 buyToken,
+        address sellToken,
+        address buyToken,
         uint auctionIndex,
         address account
     )
@@ -379,8 +371,8 @@ contract KyberDxMarketMaker is Withdrawable {
     // The amount of tokens that matches the amount sold by provided account in
     // specified auction index, deducting the amount that was already bought.
     function calculateAuctionBuyTokens(
-        ERC20 sellToken,
-        ERC20 buyToken,
+        address sellToken,
+        address buyToken,
         uint auctionIndex,
         address account
     )
@@ -407,7 +399,13 @@ contract KyberDxMarketMaker is Withdrawable {
         // No price for this auction, it is a future one.
         if (den == 0) return 0;
 
-        return sub(div(mul(sellVolume, num), den), buyVolume);
+        return sub(
+                div(
+                        mul(sellVolume, num),
+                        den
+                ),
+                buyVolume
+        );
     }
 
     function atleastZero(int a)
@@ -423,8 +421,8 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     event AuctionTriggered(
-        ERC20 indexed sellToken,
-        ERC20 indexed buyToken,
+        address indexed sellToken,
+        address indexed buyToken,
         uint indexed auctionIndex,
         uint sellTokenAmount,
         uint sellTokenAmountWithFee
@@ -432,8 +430,8 @@ contract KyberDxMarketMaker is Withdrawable {
 
     // TODO: maybe verify that pair is listed in dutchx
     function triggerAuction(
-        ERC20 sellToken,
-        ERC20 buyToken
+        address sellToken,
+        address buyToken
     )
         internal
         returns (bool)
@@ -466,8 +464,8 @@ contract KyberDxMarketMaker is Withdrawable {
 
     // TODO: check for all the requirements of dutchx
     event BoughtInAuction(
-        ERC20 indexed sellToken,
-        ERC20 indexed buyToken,
+        address indexed sellToken,
+        address indexed buyToken,
         uint auctionIndex,
         uint buyTokenAmount,
         bool clearedAuction
@@ -481,8 +479,8 @@ contract KyberDxMarketMaker is Withdrawable {
         Revets if no auction active or not enough tokens for buying.
     */
     function buyInAuction(
-        ERC20 sellToken,
-        ERC20 buyToken
+        address sellToken,
+        address buyToken
     )
         internal
         returns (bool bought)
@@ -538,7 +536,7 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     function depositAllBalance(
-        ERC20 token
+        address token
     )
         internal
         returns (uint)
@@ -570,8 +568,8 @@ contract KyberDxMarketMaker is Withdrawable {
     );
 
     function isPriceRightForBuying(
-        ERC20 sellToken,
-        ERC20 buyToken,
+        address sellToken,
+        address buyToken,
         uint auctionIndex
     )
         internal
