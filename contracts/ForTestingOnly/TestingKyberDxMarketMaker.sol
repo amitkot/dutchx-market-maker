@@ -13,14 +13,14 @@ contract TestingKyberDxMarketMaker is KyberDxMarketMaker {
     {
     }
 
-    function testTriggerAuction(
+    function testFundAuctionDirection(
         address sellToken,
         address buyToken
     )
         public
         returns (bool)
     {
-        return triggerAuction(sellToken, buyToken);
+        return fundAuctionDirection(sellToken, buyToken);
     }
 
     function testBuyInAuction(

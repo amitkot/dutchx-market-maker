@@ -25,15 +25,19 @@ contract KyberDxMarketMaker is Withdrawable {
     uint public constant DX_AUCTION_START_WAITING_FOR_FUNDING = 1;
 
     enum AuctionState {
-        NO_AUCTION_TRIGGERED,
-        AUCTION_TRIGGERED_WAITING,
-        AUCTION_IN_PROGRESS
+        WAITING_FOR_FUNDING,
+        WAITING_FOR_OPP_FUNDING,
+        WAITING_FOR_SCHEDULED_AUCTION,
+        AUCTION_IN_PROGRESS,
+        WAITING_FOR_OPP_TO_FINISH
     }
 
     // Exposing the enum values to external tools.
-    AuctionState constant public NO_AUCTION_TRIGGERED = AuctionState.NO_AUCTION_TRIGGERED;
-    AuctionState constant public AUCTION_TRIGGERED_WAITING = AuctionState.AUCTION_TRIGGERED_WAITING;
+    AuctionState constant public WAITING_FOR_FUNDING = AuctionState.WAITING_FOR_FUNDING;
+    AuctionState constant public WAITING_FOR_OPP_FUNDING = AuctionState.WAITING_FOR_OPP_FUNDING;
+    AuctionState constant public WAITING_FOR_SCHEDULED_AUCTION = AuctionState.WAITING_FOR_SCHEDULED_AUCTION;
     AuctionState constant public AUCTION_IN_PROGRESS = AuctionState.AUCTION_IN_PROGRESS;
+    AuctionState constant public WAITING_FOR_OPP_TO_FINISH = AuctionState.WAITING_FOR_OPP_TO_FINISH;
 
     DutchExchange public dx;
     EtherToken public weth;
@@ -175,20 +179,25 @@ contract KyberDxMarketMaker is Withdrawable {
         uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
         emit CurrentAuctionState(sellToken, buyToken, auctionIndex, state);
 
-        if (state == AuctionState.AUCTION_TRIGGERED_WAITING) {
-            return false;
+        if (state == AuctionState.WAITING_FOR_FUNDING) {
+            claimAuctionTokens(sellToken, buyToken);
+            require(fundAuctionDirection(sellToken, buyToken));
+            return true;
         }
 
-        if (state == AuctionState.NO_AUCTION_TRIGGERED) {
-            claimAuctionTokens(sellToken, buyToken);
-            require(triggerAuction(sellToken, buyToken));
-            return true;
+        if (state == AuctionState.WAITING_FOR_OPP_FUNDING ||
+            state == AuctionState.WAITING_FOR_SCHEDULED_AUCTION) {
+            return false;
         }
 
         if (state == AuctionState.AUCTION_IN_PROGRESS) {
             if (isPriceRightForBuying(sellToken, buyToken, auctionIndex)) {
                 return buyInAuction(sellToken, buyToken);
             }
+            return false;
+        }
+
+        if (state == AuctionState.WAITING_FOR_OPP_TO_FINISH) {
             return false;
         }
 
@@ -310,17 +319,33 @@ contract KyberDxMarketMaker is Withdrawable {
         view
         returns (AuctionState)
     {
+
+        // Unfunded auctions have an auctionStart time equal to a constant (1)
         uint auctionStart = dx.getAuctionStart(sellToken, buyToken);
-        if (auctionStart > DX_AUCTION_START_WAITING_FOR_FUNDING) {
-            // DutchExchange logic uses auction start time.
-            /* solhint-disable not-rely-on-time */
-            if (auctionStart > now) {
-                return AuctionState.AUCTION_TRIGGERED_WAITING;
-            } else {
-                return AuctionState.AUCTION_IN_PROGRESS;
+        if (auctionStart == DX_AUCTION_START_WAITING_FOR_FUNDING) {
+            // Other side might also be not fully funded, but we're primarily
+            // interested in this direction.
+            if (calculateMissingTokenForAuctionStart(sellToken, buyToken) > 0) {
+                return AuctionState.WAITING_FOR_FUNDING;
             }
+
+            return AuctionState.WAITING_FOR_OPP_FUNDING;
         }
-        return AuctionState.NO_AUCTION_TRIGGERED;
+
+        // DutchExchange logic uses auction start time.
+        /* solhint-disable not-rely-on-time */
+        if (auctionStart > now) {
+            return AuctionState.WAITING_FOR_SCHEDULED_AUCTION;
+        }
+
+        uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
+        uint closingPriceDen;
+        (, closingPriceDen) = dx.closingPrices(sellToken, buyToken, auctionIndex);
+        if (closingPriceDen == 0) {
+            return AuctionState.AUCTION_IN_PROGRESS;
+        }
+
+        return AuctionState.WAITING_FOR_OPP_TO_FINISH;
     }
 
     function getKyberRate(
@@ -429,7 +454,7 @@ contract KyberDxMarketMaker is Withdrawable {
     );
 
     // TODO: maybe verify that pair is listed in dutchx
-    function triggerAuction(
+    function fundAuctionDirection(
         address sellToken,
         address buyToken
     )
@@ -446,7 +471,7 @@ contract KyberDxMarketMaker is Withdrawable {
         uint balance = dx.balances(sellToken, address(this));
         require(
             balance >= missingTokensWithFee,
-            "Not enough tokens to trigger auction"
+            "Not enough tokens to fund auction direction"
         );
 
         uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
