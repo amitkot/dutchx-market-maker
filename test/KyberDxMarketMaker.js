@@ -203,7 +203,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     dbg(
       `calling dx.addTokenPair(${weth.address}, ${
         knc.address
-      }, ${initialWethWei}, 0, ${initialClosingPriceNum}, ${initialClosingPriceDen})`
+      }, ${initialWethWei}, 0, ${initialClosingPriceDen}, ${initialClosingPriceNum})`
     )
     await dx.addTokenPair(
       weth.address,
@@ -1448,6 +1448,57 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       )
 
       calculatedBuyTokens.should.be.eq.BN(expectedBuyTokens.subn(10000))
+    })
+
+    it('multiple buyers, not enough available buy tokens -> buy available amount', async () => {
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+      // seller1 funds all of the auction
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
+      await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
+
+      let p = await dx.getCurrentAuctionPrice(
+        knc.address,
+        weth.address,
+        auctionIndex
+      )
+      const auctionSellVolume = await dx.sellVolumesCurrent(
+        knc.address,
+        weth.address
+      )
+
+      // Other user buys half of available buy tokens
+      const remainingBuyTokens = auctionSellVolume.mul(p.num).div(p.den)
+      await buyAuctionTokens(
+        knc,
+        auctionIndex,
+        remainingBuyTokens.divn(2) /* amount */,
+        user,
+        true /* addFee */
+      )
+
+      const calculatedBuyTokens = await dxmm.calculateAuctionBuyTokens.call(
+        knc.address /* sellToken */,
+        weth.address /* buyToken */,
+        auctionIndex /* auctionIndex */,
+        seller1 /* account */
+      )
+      dbg(`seller1 should buy ${calculatedBuyTokens}`)
+
+      // seller1 cannot buy everything needed to buy all they sold so they buy
+      // the available amount.
+      p = await dx.getCurrentAuctionPrice(
+        knc.address,
+        weth.address,
+        auctionIndex
+      )
+      const buyVolume1 = await dx.buyVolumes(knc.address, weth.address)
+      const remaining = auctionSellVolume
+        .mul(p.num)
+        .div(p.den)
+        .sub(buyVolume1)
+
+      calculatedBuyTokens.should.be.eq.BN(remaining)
     })
 
     it('no auction triggered', async () => {

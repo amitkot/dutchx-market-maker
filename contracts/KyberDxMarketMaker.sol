@@ -411,7 +411,6 @@ contract KyberDxMarketMaker is Withdrawable {
             auctionIndex,
             account
         );
-        uint buyVolume = dx.buyVolumes(sellToken, buyToken);
 
         uint num;
         uint den;
@@ -424,13 +423,17 @@ contract KyberDxMarketMaker is Withdrawable {
         // No price for this auction, it is a future one.
         if (den == 0) return 0;
 
-        return sub(
-                div(
-                        mul(sellVolume, num),
-                        den
-                ),
-                buyVolume
+        uint wantedBuyVolume = div(mul(sellVolume, num), den);
+
+        uint auctionSellVolume = dx.sellVolumesCurrent(sellToken, buyToken);
+        uint buyVolume = dx.buyVolumes(sellToken, buyToken);
+        uint outstandingBuyVolume = atleastZero(
+            int(mul(auctionSellVolume, num) / den - buyVolume)
         );
+
+        return wantedBuyVolume < outstandingBuyVolume
+            ? wantedBuyVolume
+            : outstandingBuyVolume;
     }
 
     function atleastZero(int a)
