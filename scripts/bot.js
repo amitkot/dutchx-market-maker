@@ -41,17 +41,10 @@ if (typeof DXMM_ADDRESS === 'undefined') {
   process.exit(1)
 }
 
-const SELL_TOKEN_ADDRESS = process.env.SELL_TOKEN_ADDRESS
-if (typeof SELL_TOKEN_ADDRESS === 'undefined') {
-  logger.error('Please configure SELL_TOKEN_ADDRESS')
-  process.exit(1)
-}
-
 const SLEEP_TIME = process.env.SLEEP_TIME || 10000
 
 // TODO: Compile the contracts instead
 const ERC20_COMPILED = 'build/contracts/ERC20WithSymbol.json'
-const WETH_COMPILED = 'build/contracts/EtherToken.json'
 const DXMM_COMPILED = 'build/contracts/KyberDxMarketMaker.json'
 const DX_COMPILED = 'build/contracts/DutchExchange.json'
 
@@ -126,7 +119,12 @@ const _getNetworkURL = net => {
   }
 }
 
-const _runMarketMaker = async (web3, gasPriceGwei) => {
+const _runMarketMaker = async (
+  web3,
+  sellTokenAddress,
+  buyTokenAddress,
+  gasPriceGwei
+) => {
   const account = (await web3.eth.getAccounts())[0]
   logger.info(`Running from account: ${account}`)
 
@@ -187,12 +185,13 @@ const _runMarketMaker = async (web3, gasPriceGwei) => {
       return new web3.eth.Contract(abi, address)
     }
 
-    logger.verbose('loading contracts')
     const dxmm = _loadContract(DXMM_COMPILED, DXMM_ADDRESS)
+
+    logger.verbose('loading contracts')
     const contracts = {
       dxmm: dxmm,
-      sellToken: _loadContract(ERC20_COMPILED, SELL_TOKEN_ADDRESS),
-      weth: _loadContract(WETH_COMPILED, await dxmm.methods.weth().call()),
+      sellToken: _loadContract(ERC20_COMPILED, sellTokenAddress),
+      buyToken: _loadContract(ERC20_COMPILED, buyTokenAddress),
       dx: _loadContract(DX_COMPILED, await dxmm.methods.dx().call())
     }
     Object.entries(contracts).forEach(([key, value]) => {
@@ -200,11 +199,11 @@ const _runMarketMaker = async (web3, gasPriceGwei) => {
     })
     return contracts
   }
-  const { dxmm, sellToken, weth: buyToken, dx } = await _loadContracts()
+  const { dxmm, sellToken, buyToken, dx } = await _loadContracts()
   logger.info(
-    `Handle ${await buyToken.methods
+    `Handle ${await sellToken.methods
       .symbol()
-      .call()} -> ${await sellToken.methods.symbol().call()}`
+      .call()} -> ${await buyToken.methods.symbol().call()}`
   )
 
   // Setting up useful data from the dxmm contract.
@@ -440,10 +439,22 @@ yargs
           describe: 'Gas price in Gwei',
           type: 'int'
         })
+        .option('st', {
+          alias: 'sellToken',
+          demandOption: true,
+          describe: 'Sell token address',
+          type: 'string'
+        })
+        .option('bt', {
+          alias: 'buyToken',
+          demandOption: true,
+          describe: 'Buy token address',
+          type: 'string'
+        })
     },
     async function(argv) {
       await runWithWeb3(argv.net, web3 => {
-        _runMarketMaker(web3, argv.gasPriceGwei)
+        _runMarketMaker(web3, argv.sellToken, argv.buyToken, argv.gasPriceGwei)
       })
     }
   )
