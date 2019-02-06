@@ -12,3 +12,8 @@ interface ERC20 {
     function decimals() external view returns(uint digits);
     event Approval(address indexed _owner, address indexed _spender, uint _value);
 }
+
+
+contract ERC20WithSymbol is ERC20 {
+    function symbol() external view returns (string memory _symbol);
+}
