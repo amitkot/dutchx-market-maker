@@ -2841,6 +2841,21 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       )
     })
 
+    it('auction in progress with right price, but did not fund so does not buy', async () => {
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+      const auctionIndex = await triggerAuction(knc, weth, seller1)
+      await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
+      // fake amount
+      const amount = 1000
+      await waitUntilKyberPriceReached(knc, weth, auctionIndex, amount)
+
+      const shouldAct = await dxmm.step.call(knc.address, weth.address, {
+        from: operator
+      })
+
+      shouldAct.should.be.false
+    })
+
     it('several cycles')
 
     it('does dxmm have sufficient funds? (token and weth)')
