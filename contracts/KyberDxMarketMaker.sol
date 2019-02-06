@@ -110,7 +110,8 @@ contract KyberDxMarketMaker is Withdrawable {
         uint buyerFunds
     );
 
-    function claimAuctionTokens(
+    // TODO: only claim the last unclaimed auction and advance lastClaimed by 1
+    function claimMultipleAuctionTokens(
         address sellToken,
         address buyToken
     )
@@ -180,7 +181,7 @@ contract KyberDxMarketMaker is Withdrawable {
         emit CurrentAuctionState(sellToken, buyToken, auctionIndex, state);
 
         if (state == AuctionState.WAITING_FOR_FUNDING) {
-            claimAuctionTokens(sellToken, buyToken);
+            claimMultipleAuctionTokens(sellToken, buyToken);
             require(fundAuctionDirection(sellToken, buyToken));
             return true;
         }

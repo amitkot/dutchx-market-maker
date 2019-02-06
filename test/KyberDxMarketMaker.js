@@ -1667,7 +1667,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     )
   })
 
-  describe('#claimAuctionTokens', () => {
+  describe('#claimMultipleAuctionTokens', () => {
     it('single auction triggered and cleared, all amounts claimed', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
       const auctionIndex = await dxmmTriggerAndClearAuction(knc, weth)
@@ -1687,7 +1687,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         dxmm.address
       )
 
-      await dxmm.claimAuctionTokens(knc.address, weth.address)
+      await dxmm.claimMultipleAuctionTokens(knc.address, weth.address)
 
       // Auction balances should be 0
       const sellerBalance = await dx.sellerBalances(
@@ -1729,11 +1729,14 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         auctionIndex
       )).returned
 
-      const claimed = await dxmm.claimAuctionTokens.call(
+      const claimed = await dxmm.claimMultipleAuctionTokens.call(
         knc.address,
         weth.address
       )
-      const res = await dxmm.claimAuctionTokens(knc.address, weth.address)
+      const res = await dxmm.claimMultipleAuctionTokens(
+        knc.address,
+        weth.address
+      )
 
       claimed.sellerFunds.should.be.eq.BN(claimedSellerAuction)
       claimed.buyerFunds.should.be.eq.BN(claimedBuyerAuction)
@@ -1807,7 +1810,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         4
       )).returned
 
-      await dxmm.claimAuctionTokens(knc.address, weth.address)
+      await dxmm.claimMultipleAuctionTokens(knc.address, weth.address)
 
       // Verify all tokens were claimed
       let balance
@@ -1907,7 +1910,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         2
       )).returned
 
-      await dxmm.claimAuctionTokens(knc.address, weth.address)
+      await dxmm.claimMultipleAuctionTokens(knc.address, weth.address)
 
       const kncBalanceAfterClaiming2 = await dx.balances(
         knc.address,
@@ -1948,7 +1951,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         3
       )).returned
 
-      await dxmm.claimAuctionTokens(knc.address, weth.address)
+      await dxmm.claimMultipleAuctionTokens(knc.address, weth.address)
 
       const kncBalanceAfterClaiming3 = await dx.balances(
         knc.address,
@@ -1989,7 +1992,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         4
       )).returned
 
-      await dxmm.claimAuctionTokens(knc.address, weth.address)
+      await dxmm.claimMultipleAuctionTokens(knc.address, weth.address)
 
       const kncBalanceAfterClaiming4 = await dx.balances(
         knc.address,
