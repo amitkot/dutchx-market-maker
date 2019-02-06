@@ -1,6 +1,7 @@
 const fs = require('fs')
 const Web3 = require('web3')
-const web3 = new Web3()
+// TODO: maybe create web3 later?
+const web3 = new Web3('http://', {})
 const HDWalletProvider = require('truffle-hdwallet-provider')
 const yargs = require('yargs')
 
@@ -35,14 +36,23 @@ const MNEMONIC = process.env.MNEMONIC
 const PRIVATE = process.env.PRIVATE
 
 const DXMM_ADDRESS = process.env.DXMM_ADDRESS
+if (typeof DXMM_ADDRESS === 'undefined') {
+  logger.error('Please configure DXMM_ADDRESS')
+  process.exit(1)
+}
+
 const SELL_TOKEN_ADDRESS = process.env.SELL_TOKEN_ADDRESS
+if (typeof SELL_TOKEN_ADDRESS === 'undefined') {
+  logger.error('Please configure SELL_TOKEN_ADDRESS')
+  process.exit(1)
+}
 
 const SLEEP_TIME = process.env.SLEEP_TIME || 10000
 
-// TODO: Compile the contracts or use these?
-const ERC20_COMPILED = 'build/contracts/ERC20.json'
+// TODO: Compile the contracts instead
+const ERC20_COMPILED = 'build/contracts/ERC20WithSymbol.json'
 const WETH_COMPILED = 'build/contracts/EtherToken.json'
-const DXMM_COMPILED = 'build/contracts/DxMarketMaker.json'
+const DXMM_COMPILED = 'build/contracts/KyberDxMarketMaker.json'
 const DX_COMPILED = 'build/contracts/DutchExchange.json'
 
 // TODO: move to util file
@@ -136,7 +146,7 @@ const _runMarketMaker = async (web3, gasPriceGwei) => {
       gasLimit = await txObject.estimateGas()
     } catch (e) {
       logger.debug(`Error in estimateGas: ${e}`)
-      gasLimit = 500 * 1000
+      gasLimit = 1000 * 1000
     }
 
     if (txTo !== null) {
@@ -169,6 +179,7 @@ const _runMarketMaker = async (web3, gasPriceGwei) => {
   }
 
   // Loads the contracts that the bot interacts with
+  // TODO: compile the contracts as part of this script
   const _loadContracts = async () => {
     const _loadContract = (abiFilename, address) => {
       const abiFile = fs.readFileSync(abiFilename, { encoding: 'utf-8' })
@@ -190,15 +201,24 @@ const _runMarketMaker = async (web3, gasPriceGwei) => {
     return contracts
   }
   const { dxmm, sellToken, weth: buyToken, dx } = await _loadContracts()
+  logger.info(
+    `Handle ${await buyToken.methods
+      .symbol()
+      .call()} -> ${await sellToken.methods.symbol().call()}`
+  )
 
   // Setting up useful data from the dxmm contract.
   const auctionState = {}
-  auctionState[await dxmm.methods.NO_AUCTION_TRIGGERED().call()] =
-    'NO_AUCTION_TRIGGERED'
-  auctionState[await dxmm.methods.AUCTION_TRIGGERED_WAITING().call()] =
-    'AUCTION_TRIGGERED_WAITING'
+  auctionState[await dxmm.methods.WAITING_FOR_FUNDING().call()] =
+    'WAITING_FOR_FUNDING'
+  auctionState[await dxmm.methods.WAITING_FOR_OPP_FUNDING().call()] =
+    'WAITING_FOR_OPP_FUNDING'
+  auctionState[await dxmm.methods.WAITING_FOR_SCHEDULED_AUCTION().call()] =
+    'WAITING_FOR_SCHEDULED_AUCTION'
   auctionState[await dxmm.methods.AUCTION_IN_PROGRESS().call()] =
     'AUCTION_IN_PROGRESS'
+  auctionState[await dxmm.methods.WAITING_FOR_OPP_TO_FINISH().call()] =
+    'WAITING_FOR_OPP_TO_FINISH'
 
   const verifyHasEnoughTokens = async (sellToken, buyToken) => {
     logger.info('Checking dxmm has enough sell tokens')
@@ -225,12 +245,11 @@ const _runMarketMaker = async (web3, gasPriceGwei) => {
     if (missingOnDx > 0) {
       logger.error(`Sell token missing from DX balance: ${missingOnDx} `)
       logger.error(
-        'Steps to fix:\n' +
-          '(1) sellToken.transfer(dxmm.address, tokenAmount)\n' +
-          '(2) dxmm.depositToDx(sellToken, tokenAmount)'
+        'Steps to fix:\n(1) sellToken.transfer(dxmm.address, tokenAmount)'
       )
       process.exit(1)
 
+      // XXX only in development
       // logger.info(`Missing sell token on DX: ${missingOnDx}, depositing...`)
       //
       // const tokenBalance = await sellToken.methods
@@ -244,14 +263,6 @@ const _runMarketMaker = async (web3, gasPriceGwei) => {
       //     sellToken.methods.transfer(dxmm.options.address, missingTokensWithFee)
       //   )
       // }
-      //
-      // logger.verbose('dxmm.depositToDx()')
-      // await sendTx(
-      //   dxmm.methods.depositToDx(
-      //     sellToken.options.address,
-      //     missingTokensWithFee
-      //   )
-      // )
     }
   }
 
@@ -286,11 +297,11 @@ const _runMarketMaker = async (web3, gasPriceGwei) => {
       logger.error(
         'Steps to fix:\n' +
           '(1) weth.deposit(amount)\n' +
-          '(2) weth.transfer(dxmm.address, amount)\n' +
-          '(3) dxmm.depositToDx(weth.address, amount)'
+          '(2) weth.transfer(dxmm.address, amount)'
       )
       process.exit(1)
 
+      // XXX only in development
       // logger.info('Sending WETH to dxmm balance on dx')
       //
       // logger.verbose('Deposit WETH -> WETH')
@@ -299,11 +310,6 @@ const _runMarketMaker = async (web3, gasPriceGwei) => {
       // logger.verbose('Transfer WETH to dxmm')
       // await sendTx(
       //   buyToken.methods.transfer(dxmm.options.address, requiredBuyTokens)
-      // )
-      //
-      // logger.verbose('Deposit to dx')
-      // await sendTx(
-      //   dxmm.methods.depositToDx(buyToken.options.address, requiredBuyTokens)
       // )
     }
   }
@@ -333,6 +339,8 @@ const _runMarketMaker = async (web3, gasPriceGwei) => {
         dxmm.options.address
       )
       .call()
+    // logger.verbose(`buyAmount: ${buyAmount}`)
+
     const kyberPrice = await dxmm.methods
       .getKyberRate(
         sellToken.options.address,
@@ -357,24 +365,26 @@ const _runMarketMaker = async (web3, gasPriceGwei) => {
   logger.debug(`State is ${auctionState[state]}`)
 
   // TODO: maybe call only if required to trigger auction?
-  await verifyHasEnoughTokens(sellToken, buyToken)
+  // TODO: remove
+  // await verifyHasEnoughTokens(sellToken, buyToken)
 
   // TODO: maybe call only if required to clear auction?
-  await verifyHasEnoughWeth(sellToken, buyToken)
-
-  let shouldAct
+  // TODO: remove
+  // await verifyHasEnoughWeth(sellToken, buyToken)
 
   logger.info('Starting loop')
+  let shouldAct
+
   while (true) {
     shouldAct = await dxmm.methods
-      .magic(sellToken.options.address, buyToken.options.address)
-      .call()
+      .step(sellToken.options.address, buyToken.options.address)
+      .call({ from: account })
 
     logger.verbose(await _prepareStatus(sellToken, buyToken, shouldAct))
 
     if (shouldAct) {
       await sendTx(
-        dxmm.methods.magic(sellToken.options.address, buyToken.options.address)
+        dxmm.methods.step(sellToken.options.address, buyToken.options.address)
       )
 
       state = await dxmm.methods
@@ -396,7 +406,7 @@ const _runMarketMaker = async (web3, gasPriceGwei) => {
 
     // XXX: only in development
     // XXX: making things go fast
-    await devNetworkWaitTimeInSeconds(5 * 60)
+    // await devNetworkWaitTimeInSeconds(5 * 60)
   }
 }
 
@@ -438,3 +448,10 @@ yargs
     }
   )
   .help().argv
+
+// TODO: add command for withdrawing balance from dx and dxmm
+// 1 - claim
+// 2 - dxmm.withdrawFromDx
+// 3 - use withdrawable calls
+
+// TODO: add command for transfering tokens to dxmm
