@@ -3,7 +3,10 @@ require('web3')
 const Helper = require('./helper.js')
 
 const BN = web3.utils.BN
-// TODO: this change is not recognized for some reason in the test cases:
+
+const util = require('util')
+
+// TODO: These changes do not influence the BN class that web3 returns. Why?
 // TODO: Extract to util class
 // Find Ceil(`this` / `num`)
 BN.prototype.divCeil = function divCeil(num) {
@@ -14,6 +17,11 @@ BN.prototype.divCeil = function divCeil(num) {
 
   // Round up
   return dm.div.negative !== 0 ? dm.div.isubn(1) : dm.div.iaddn(1)
+}
+
+// Change BN toString to use base 10
+BN.prototype.inspect = function inspect() {
+  return (this.red ? '<BN-R: ' : '<BN: ') + this.toString(10) + '>'
 }
 
 require('chai')
@@ -1667,406 +1675,89 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     )
   })
 
-  describe('#claimMultipleAuctionTokens', () => {
-    it('single auction triggered and cleared, all amounts claimed', async () => {
+  describe('#claimSpecificAuctionFunds', () => {
+    it('returns user funds in specific auction', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      const auctionIndex = await dxmmTriggerAndClearAuction(knc, weth)
-
-      const kncBalance0 = await dx.balances(knc.address, dxmm.address)
-      const wethBalance0 = await dx.balances(weth.address, dxmm.address)
-      const lastAuctionSellerBalance0 = await dx.sellerBalances(
+      await dxmmTriggerAndClearAuction(knc, weth)
+      const unclaimedKnc = await dx.sellerBalances(
         knc.address,
         weth.address,
-        auctionIndex,
+        2,
         dxmm.address
       )
-      const lastAuctionBuyerBalance0 = await dx.buyerBalances(
+      const unclaimedWeth = await dx.buyerBalances(
         knc.address,
         weth.address,
-        auctionIndex,
+        2,
         dxmm.address
       )
 
-      await dxmm.claimMultipleAuctionTokens(knc.address, weth.address)
-
-      // Auction balances should be 0
-      const sellerBalance = await dx.sellerBalances(
+      const res = await dxmm.claimSpecificAuctionFunds.call(
         knc.address,
         weth.address,
-        auctionIndex,
-        dxmm.address
+        2
       )
-      sellerBalance.should.be.eq.BN(0)
-      const buyerBalance = await dx.buyerBalances(
-        knc.address,
-        weth.address,
-        auctionIndex,
-        dxmm.address
-      )
-      buyerBalance.should.be.eq.BN(0)
 
-      // tokens moved to dxmm balances
-      const kncBalance = await dx.balances(knc.address, dxmm.address)
-      kncBalance.should.be.eq.BN(kncBalance0.add(lastAuctionSellerBalance0))
-      const wethBalance = await dx.balances(weth.address, dxmm.address)
-      wethBalance.should.be.eq.BN(wethBalance0.add(lastAuctionBuyerBalance0))
+      res.sellerFunds.should.be.eq.BN(unclaimedWeth)
+      res.buyerFunds.should.be.eq.BN(unclaimedKnc)
     })
 
-    it('single auction triggered and cleared, event emitted', async () => {
+    it('funds claimed', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-      const auctionIndex = await dxmmTriggerAndClearAuction(knc, weth)
-
-      const claimedSellerAuction = (await dx.claimSellerFunds.call(
-        knc.address,
-        weth.address,
-        dxmm.address,
-        auctionIndex
-      )).returned
-      const claimedBuyerAuction = (await dx.claimBuyerFunds.call(
-        knc.address,
-        weth.address,
-        dxmm.address,
-        auctionIndex
-      )).returned
-
-      const claimed = await dxmm.claimMultipleAuctionTokens.call(
-        knc.address,
-        weth.address
-      )
-      const res = await dxmm.claimMultipleAuctionTokens(
-        knc.address,
-        weth.address
-      )
-
-      claimed.sellerFunds.should.be.eq.BN(claimedSellerAuction)
-      claimed.buyerFunds.should.be.eq.BN(claimedBuyerAuction)
-
-      dbg(`%%% ev.sellToken === ${knc.address}`)
-      dbg(`%%% ev.buyToken === ${weth.address}`)
-      dbg(`%%% ev.previousLastComletedAuction.eq(${0})`)
-      dbg(`%%% ev.newLastCompletedAuction.eq(${auctionIndex})`)
-      dbg(`%%% ev.sellerFunds.eq(${claimedSellerAuction})`)
-      dbg(`%%% ev.buyerFunds.eq(${claimedBuyerAuction})`)
-
-      truffleAssert.eventEmitted(res, 'AuctionTokensClaimed', ev => {
-        return (
-          ev.sellToken === knc.address &&
-          ev.buyToken === weth.address &&
-          ev.previousLastCompletedAuction.eq(new BN(0)) &&
-          ev.newLastCompletedAuction.eq(new BN(2)) &&
-          ev.sellerFunds.eq(claimedSellerAuction) &&
-          ev.buyerFunds.eq(claimedBuyerAuction)
-        )
-      })
-    })
-
-    it('called once after multiple auctions finished', async () => {
-      const knc = await deployTokenAddToDxAndClearFirstAuction()
-
-      // Auctions 2, 3, 4
-      await dxmmTriggerAndClearAuction(knc, weth)
-      await dxmmTriggerAndClearAuction(knc, weth)
       await dxmmTriggerAndClearAuction(knc, weth)
 
-      // Get balances before claiming
       const kncBalanceBefore = await dx.balances(knc.address, dxmm.address)
       const wethBalanceBefore = await dx.balances(weth.address, dxmm.address)
 
-      // Get amounts to be claimed in the auctions
-      const claimedSellerAuction2 = (await dx.claimSellerFunds.call(
-        knc.address,
-        weth.address,
-        dxmm.address,
-        2
-      )).returned
-      const claimedSellerAuction3 = (await dx.claimSellerFunds.call(
-        knc.address,
-        weth.address,
-        dxmm.address,
-        3
-      )).returned
-      const claimedSellerAuction4 = (await dx.claimSellerFunds.call(
-        knc.address,
-        weth.address,
-        dxmm.address,
-        4
-      )).returned
-      const claimedBuyerAuction2 = (await dx.claimBuyerFunds.call(
-        knc.address,
-        weth.address,
-        dxmm.address,
-        2
-      )).returned
-      const claimedBuyerAuction3 = (await dx.claimBuyerFunds.call(
-        knc.address,
-        weth.address,
-        dxmm.address,
-        3
-      )).returned
-      const claimedBuyerAuction4 = (await dx.claimBuyerFunds.call(
-        knc.address,
-        weth.address,
-        dxmm.address,
-        4
-      )).returned
-
-      await dxmm.claimMultipleAuctionTokens(knc.address, weth.address)
-
-      // Verify all tokens were claimed
-      let balance
-      balance = await dx.sellerBalances(
+      const unclaimedKnc = await dx.sellerBalances(
         knc.address,
         weth.address,
         2,
         dxmm.address
       )
-      balance.should.be.eq.BN(0)
-      balance = await dx.sellerBalances(
-        knc.address,
-        weth.address,
-        3,
-        dxmm.address
-      )
-      balance.should.be.eq.BN(0)
-      balance = await dx.sellerBalances(
-        knc.address,
-        weth.address,
-        4,
-        dxmm.address
-      )
-      balance.should.be.eq.BN(0)
-      balance = await dx.buyerBalances(
+
+      const unclaimedWeth = await dx.buyerBalances(
         knc.address,
         weth.address,
         2,
         dxmm.address
       )
-      balance.should.be.eq.BN(0)
-      balance = await dx.buyerBalances(
-        knc.address,
-        weth.address,
-        3,
-        dxmm.address
-      )
-      balance.should.be.eq.BN(0)
-      balance = await dx.buyerBalances(
-        knc.address,
-        weth.address,
-        4,
-        dxmm.address
-      )
-      balance.should.be.eq.BN(0)
 
-      // Final token balances should contain claimed auction balances
+      await dxmm.claimSpecificAuctionFunds(knc.address, weth.address, 2)
+
       const kncBalanceAfter = await dx.balances(knc.address, dxmm.address)
-      kncBalanceAfter.should.be.eq.BN(
-        kncBalanceBefore
-          .add(claimedBuyerAuction2)
-          .add(claimedBuyerAuction3)
-          .add(claimedBuyerAuction4)
-      )
+      kncBalanceAfter.should.be.eq.BN(kncBalanceBefore.add(unclaimedKnc))
+
       const wethBalanceAfter = await dx.balances(weth.address, dxmm.address)
-      wethBalanceAfter.should.be.eq.BN(
-        wethBalanceBefore
-          .add(claimedSellerAuction2)
-          .add(claimedSellerAuction3)
-          .add(claimedSellerAuction4)
-      )
+      wethBalanceAfter.should.be.eq.BN(wethBalanceBefore.add(unclaimedWeth))
     })
 
-    it('called multiple times after auctions finished', async () => {
-      // This is a long test that after initializing a token performs
-      // 3 cycles of triggering an auction, clearing it and claiming the
-      // seller and buyer tokens using dxmm.
+    it('called twice on same auction, second call should do nothing', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
-
-      // =============
-      //   Auction 2
-      // =============
       await dxmmTriggerAndClearAuction(knc, weth)
 
-      // Get balances before claiming
-      const kncBalanceBeforeClaiming2 = await dx.balances(
-        knc.address,
-        dxmm.address
-      )
-      const wethBalanceBeforeClaiming2 = await dx.balances(
-        weth.address,
-        dxmm.address
-      )
+      // First call should claim funds
+      await dxmm.claimSpecificAuctionFunds(knc.address, weth.address, 2)
 
-      // Get amounts to be claimed in the auctions
-      const claimedSellerAuction2 = (await dx.claimSellerFunds.call(
+      const kncBalanceBefore = await dx.balances(knc.address, dxmm.address)
+      const wethBalanceBefore = await dx.balances(weth.address, dxmm.address)
+
+      // Second call should do nothing
+      const res = await dxmm.claimSpecificAuctionFunds.call(
         knc.address,
         weth.address,
-        dxmm.address,
         2
-      )).returned
+      )
+      await dxmm.claimSpecificAuctionFunds(knc.address, weth.address, 2)
 
-      const claimedBuyerAuction2 = (await dx.claimBuyerFunds.call(
-        knc.address,
-        weth.address,
-        dxmm.address,
-        2
-      )).returned
+      res.sellerFunds.should.be.eq.BN(0)
+      res.buyerFunds.should.be.eq.BN(0)
 
-      await dxmm.claimMultipleAuctionTokens(knc.address, weth.address)
+      const kncBalanceAfter = await dx.balances(knc.address, dxmm.address)
+      kncBalanceAfter.should.be.eq.BN(kncBalanceBefore)
 
-      const kncBalanceAfterClaiming2 = await dx.balances(
-        knc.address,
-        dxmm.address
-      )
-      const wethBalanceAfterClaiming2 = await dx.balances(
-        weth.address,
-        dxmm.address
-      )
-
-      // =============
-      //   Auction 3
-      // =============
-      await dxmmTriggerAndClearAuction(knc, weth)
-
-      // Get balances before claiming
-      const kncBalanceBeforeClaiming3 = await dx.balances(
-        knc.address,
-        dxmm.address
-      )
-      const wethBalanceBeforeClaiming3 = await dx.balances(
-        weth.address,
-        dxmm.address
-      )
-
-      // Get amounts to be claimed in the auctions
-      const claimedSellerAuction3 = (await dx.claimSellerFunds.call(
-        knc.address,
-        weth.address,
-        dxmm.address,
-        3
-      )).returned
-
-      const claimedBuyerAuction3 = (await dx.claimBuyerFunds.call(
-        knc.address,
-        weth.address,
-        dxmm.address,
-        3
-      )).returned
-
-      await dxmm.claimMultipleAuctionTokens(knc.address, weth.address)
-
-      const kncBalanceAfterClaiming3 = await dx.balances(
-        knc.address,
-        dxmm.address
-      )
-      const wethBalanceAfterClaiming3 = await dx.balances(
-        weth.address,
-        dxmm.address
-      )
-
-      // =============
-      //   Auction 3
-      // =============
-      await dxmmTriggerAndClearAuction(knc, weth)
-
-      // Get balances before claiming
-      const kncBalanceBeforeClaiming4 = await dx.balances(
-        knc.address,
-        dxmm.address
-      )
-      const wethBalanceBeforeClaiming4 = await dx.balances(
-        weth.address,
-        dxmm.address
-      )
-
-      // Get amounts to be claimed in the auctions
-      const claimedSellerAuction4 = (await dx.claimSellerFunds.call(
-        knc.address,
-        weth.address,
-        dxmm.address,
-        4
-      )).returned
-
-      const claimedBuyerAuction4 = (await dx.claimBuyerFunds.call(
-        knc.address,
-        weth.address,
-        dxmm.address,
-        4
-      )).returned
-
-      await dxmm.claimMultipleAuctionTokens(knc.address, weth.address)
-
-      const kncBalanceAfterClaiming4 = await dx.balances(
-        knc.address,
-        dxmm.address
-      )
-      const wethBalanceAfterClaiming4 = await dx.balances(
-        weth.address,
-        dxmm.address
-      )
-
-      // Verify all tokens were claimed
-      let balance
-      balance = await dx.sellerBalances(
-        knc.address,
-        weth.address,
-        2,
-        dxmm.address
-      )
-      balance.should.be.eq.BN(0)
-      balance = await dx.sellerBalances(
-        knc.address,
-        weth.address,
-        3,
-        dxmm.address
-      )
-      balance.should.be.eq.BN(0)
-      balance = await dx.sellerBalances(
-        knc.address,
-        weth.address,
-        4,
-        dxmm.address
-      )
-      balance.should.be.eq.BN(0)
-      balance = await dx.buyerBalances(
-        knc.address,
-        weth.address,
-        2,
-        dxmm.address
-      )
-      balance.should.be.eq.BN(0)
-      balance = await dx.buyerBalances(
-        knc.address,
-        weth.address,
-        3,
-        dxmm.address
-      )
-      balance.should.be.eq.BN(0)
-      balance = await dx.buyerBalances(
-        knc.address,
-        weth.address,
-        4,
-        dxmm.address
-      )
-      balance.should.be.eq.BN(0)
-
-      kncBalanceAfterClaiming2.should.be.eq.BN(
-        kncBalanceBeforeClaiming2.add(claimedBuyerAuction2)
-      )
-      kncBalanceAfterClaiming3.should.be.eq.BN(
-        kncBalanceBeforeClaiming3.add(claimedBuyerAuction3)
-      )
-      kncBalanceAfterClaiming4.should.be.eq.BN(
-        kncBalanceBeforeClaiming4.add(claimedBuyerAuction4)
-      )
-
-      wethBalanceAfterClaiming2.should.be.eq.BN(
-        wethBalanceBeforeClaiming2.add(claimedSellerAuction2)
-      )
-      wethBalanceAfterClaiming3.should.be.eq.BN(
-        wethBalanceBeforeClaiming3.add(claimedSellerAuction3)
-      )
-      wethBalanceAfterClaiming4.should.be.eq.BN(
-        wethBalanceBeforeClaiming4.add(claimedSellerAuction4)
-      )
+      const wethBalanceAfter = await dx.balances(weth.address, dxmm.address)
+      wethBalanceAfter.should.be.eq.BN(wethBalanceBefore)
     })
   })
 
@@ -2522,23 +2213,27 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     it('no auction in progress or planned - previous auction funds claimed', async () => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
-      // Auctions 2, 3, 4
-      await dxmmTriggerAndClearAuction(knc, weth)
-      await dxmmTriggerAndClearAuction(knc, weth)
+      // Auction 2
       await dxmmTriggerAndClearAuction(knc, weth)
 
       const res = await dxmm.step(knc.address, weth.address, {
         from: operator
       })
 
-      truffleAssert.eventEmitted(res, 'AuctionTokensClaimed', ev => {
-        return (
-          ev.sellToken === knc.address &&
-          ev.buyToken === weth.address &&
-          ev.previousLastCompletedAuction.eqn(0) &&
-          ev.newLastCompletedAuction.eqn(4)
-        )
-      })
+      const sellerBalance = await dx.sellerBalances(
+        knc.address,
+        weth.address,
+        2,
+        dxmm.address
+      )
+      sellerBalance.should.be.eq.BN(0)
+      const buyerBalance = await dx.buyerBalances(
+        knc.address,
+        weth.address,
+        2,
+        dxmm.address
+      )
+      buyerBalance.should.be.eq.BN(0)
     })
 
     it('auction already triggered, waiting - no action required', async () => {
@@ -2577,7 +2272,6 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       })
 
       // TODO: check that NO EVENT AT ALL has been emitted
-      truffleAssert.eventNotEmitted(res, 'AuctionTokensClaimed')
       truffleAssert.eventNotEmitted(res, 'AuctionTriggered')
       truffleAssert.eventNotEmitted(res, 'BoughtInAuction')
     })
@@ -2633,7 +2327,6 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       })
 
       // TODO: check that NO EVENT AT ALL has been emitted
-      truffleAssert.eventNotEmitted(res, 'AuctionTokensClaimed')
       truffleAssert.eventNotEmitted(res, 'AuctionTriggered')
       truffleAssert.eventNotEmitted(res, 'BoughtInAuction')
     })
@@ -2884,4 +2577,37 @@ async function blockChainTime() {
 
 async function dbg(...args) {
   if (DEBUG) console.log(...args)
+}
+
+// Called with a collection of variables and print their name and values.
+// e.g.:
+// const a = 'banana'
+// dbgVars({ a })
+const dbgVars = varObj => {
+  if (!DEBUG) return
+  // console.log(
+  // util.inspect(varObj, { showHidden: true, depth: null, colors: true })
+  // )
+  for (let key in varObj) {
+    const v = varObj[key]
+    if (BN.isBN(v)) {
+      // varObj[key].prototype.inspect = function inspect() {
+      // return (this.red ? '<BN-R: ' : '<BN: ') + this.toString(10) + '>'
+      // }
+      v.inspect = () => {
+        return (v.red ? '<BN-R: ' : '<BN: ') + v.toString(10) + '>'
+      }
+    }
+    console.log(
+      `${key}:`,
+      util.inspect(v, { showHidden: true, depth: null, colors: true })
+    )
+  }
+}
+
+const dbgHex = varObj => {
+  if (!DEBUG) return
+  console.log(
+    util.inspect(varObj, { showHidden: true, depth: null, colors: true })
+  )
 }

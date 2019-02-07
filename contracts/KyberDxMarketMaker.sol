@@ -44,7 +44,7 @@ contract KyberDxMarketMaker is Withdrawable {
     KyberNetworkProxy public kyberNetworkProxy;
 
     // Token => Token => auctionIndex
-    mapping (address => mapping (address => uint)) public lastClaimedAuction;
+    mapping (address => mapping (address => uint)) public lastParticipatedAuction;
 
     constructor(
         DutchExchange _dx,
@@ -101,49 +101,50 @@ contract KyberDxMarketMaker is Withdrawable {
         return withdrawn;
     }
 
-    event AuctionTokensClaimed(
-        address indexed sellToken,
-        address indexed buyToken,
-        uint previousLastCompletedAuction,
-        uint newLastCompletedAuction,
-        uint sellerFunds,
-        uint buyerFunds
-    );
+    /**
+      Claims funds from a specific auction.
 
-    // TODO: only claim the last unclaimed auction and advance lastClaimed by 1
-    function claimMultipleAuctionTokens(
+      sellerFunds - the amount in token wei of *buyToken* that was returned.
+      buyerFunds - the amount in token wei of *sellToken* that was returned.
+      */
+    function claimSpecificAuctionFunds(
         address sellToken,
-        address buyToken
+        address buyToken,
+        uint auctionIndex
     )
         public
         returns (uint sellerFunds, uint buyerFunds)
     {
-        uint initialLastClaimed = lastClaimedAuction[sellToken][buyToken];
-
-        uint lastCompletedAuction = dx.getAuctionIndex(sellToken, buyToken) - 1;
-        if (lastCompletedAuction <= initialLastClaimed) return (0, 0);
-
-        uint amount;
-        for (uint i = lastClaimedAuction[sellToken][buyToken] + 1; i <= lastCompletedAuction; i++) {
-            if (dx.sellerBalances(sellToken, buyToken, i, address(this)) > 0) {
-                (amount, ) = dx.claimSellerFunds(sellToken, buyToken, address(this), i);
-                sellerFunds += amount;
-            }
-            if (dx.buyerBalances(sellToken, buyToken, i, address(this)) > 0) {
-                (amount, ) = dx.claimBuyerFunds(sellToken, buyToken, address(this), i);
-                buyerFunds += amount;
-            }
-        }
-
-        lastClaimedAuction[sellToken][buyToken] = lastCompletedAuction;
-        emit AuctionTokensClaimed(
+        uint availableFunds;
+        availableFunds = dx.sellerBalances(
             sellToken,
             buyToken,
-            initialLastClaimed,
-            lastCompletedAuction,
-            sellerFunds,
-            buyerFunds
+            auctionIndex,
+            address(this)
         );
+        if (availableFunds > 0) {
+            (sellerFunds, ) = dx.claimSellerFunds(
+                sellToken,
+                buyToken,
+                address(this),
+                auctionIndex
+            );
+        }
+
+        availableFunds = dx.buyerBalances(
+            sellToken,
+            buyToken,
+            auctionIndex,
+            address(this)
+        );
+        if (availableFunds > 0) {
+            (buyerFunds, ) = dx.claimBuyerFunds(
+                sellToken,
+                buyToken,
+                address(this),
+                auctionIndex
+            );
+        }
     }
 
     /**
@@ -181,7 +182,11 @@ contract KyberDxMarketMaker is Withdrawable {
         emit CurrentAuctionState(sellToken, buyToken, auctionIndex, state);
 
         if (state == AuctionState.WAITING_FOR_FUNDING) {
-            claimMultipleAuctionTokens(sellToken, buyToken);
+            claimSpecificAuctionFunds(
+                sellToken,
+                buyToken,
+                lastParticipatedAuction[sellToken][buyToken]
+            );
             require(fundAuctionDirection(sellToken, buyToken));
             return true;
         }
@@ -480,6 +485,7 @@ contract KyberDxMarketMaker is Withdrawable {
 
         uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
         dx.postSellOrder(sellToken, buyToken, auctionIndex, missingTokensWithFee);
+        lastParticipatedAuction[sellToken][buyToken] = auctionIndex;
 
         emit AuctionTriggered(
             sellToken,
