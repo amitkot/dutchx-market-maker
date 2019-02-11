@@ -53,6 +53,8 @@ let seller1
 let buyer1
 let user
 let operator
+let lister
+let bank
 
 let WAITING_FOR_FUNDING
 let WAITING_FOR_OPP_FUNDING
@@ -67,7 +69,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       'Some Token',
       'KNC' + tokenDeployedIndex++,
       18,
-      { from: admin }
+      { from: bank }
     )
     dbg(`Deployed token number ${tokenDeployedIndex} at ${token.address}`)
     return token
@@ -78,7 +80,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       'Some Token',
       'KNC' + tokenDeployedIndex++,
       decimals,
-      { from: admin }
+      { from: bank }
     )
     dbg(
       `Deployed token number ${tokenDeployedIndex} with ${decimals} decimals at ${
@@ -125,7 +127,8 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     if (addFee) {
       amount = await dxmm.addFee(amount)
     }
-    await weth.transfer(buyer, amount, { from: admin })
+    await weth.deposit({ from: bank, value: amount })
+    await weth.transfer(buyer, amount, { from: bank })
     await weth.approve(dx.address, amount, { from: buyer })
     await dx.deposit(weth.address, amount, { from: buyer })
     await dx.postBuyOrder(
@@ -139,7 +142,10 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
   const sellTokens = async (token, amount, seller) => {
     const tokenSellAmount = await dxmm.addFee(amount)
-    await token.transfer(seller, tokenSellAmount, { from: admin })
+    if (token === weth) {
+      await weth.deposit({ value: amount, from: bank })
+    }
+    await token.transfer(seller, tokenSellAmount, { from: bank })
     await token.approve(dx.address, tokenSellAmount, { from: seller })
     await dx.depositAndSell(token.address, weth.address, tokenSellAmount, {
       from: seller
@@ -177,14 +183,13 @@ contract('TestingKyberDxMarketMaker', async accounts => {
   }
 
   async function deployTokenAddToDxAndClearFirstAuction() {
-    const lister = admin
     const initialWethWei = web3.utils.toWei(new BN(100))
     const knc = await deployToken()
     const kncSymbol = await knc.symbol()
     dbg(`======================================`)
     dbg(`= Start initializing ${kncSymbol}`)
     dbg(`======================================`)
-    dbg(`\n--- deployed ${kncSymbol}`)
+    dbg(`bankn--- deployed ${kncSymbol}`)
 
     await weth.deposit({
       value: web3.utils.toWei(new BN(10000)),
@@ -200,6 +205,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
     // Using 0 amount as mock kyber contract returns fixed rate anyway.
     const kyberRate = await dxmm.getKyberRate(knc.address, weth.address, 0)
+
     // dividing by 2 to make numbers smaller, avoid reverts due to fear
     // of overflow
     const initialClosingPriceNum = kyberRate.num.divn(2)
@@ -245,6 +251,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     const buyAmount = remainingBuyVolume
     dbg(`lister will buy using ${buyAmount} ${kncSymbol}`)
 
+    await knc.transfer(lister, buyAmount, { from: bank })
     await knc.approve(dx.address, buyAmount, { from: lister })
     await dx.deposit(knc.address, buyAmount, { from: lister })
     dbg(`\n--- lister deposited ${buyAmount} ${kncSymbol}`)
@@ -368,10 +375,10 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     dbg(`Missing amount with fee: ${tokenSellAmount}`)
 
     if (sellToken === weth) {
-      await sellToken.deposit({ value: tokenSellAmount, from: admin })
+      await sellToken.deposit({ value: tokenSellAmount, from: bank })
     }
 
-    await sellToken.transfer(seller, tokenSellAmount, { from: admin })
+    await sellToken.transfer(seller, tokenSellAmount, { from: bank })
     dbg(
       `--- seller now has ${await sellToken.balanceOf(
         seller
@@ -511,10 +518,10 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     dbg('shouldBuyVolume:', shouldBuyVolume.toString())
 
     if (buyToken === weth) {
-      await buyToken.deposit({ value: shouldBuyVolume, from: buyer })
+      await buyToken.deposit({ value: shouldBuyVolume, from: bank })
     }
     // TODO: maybe fund buyer in a better point in the code
-    await buyToken.transfer(buyer, shouldBuyVolume, { from: admin })
+    await buyToken.transfer(buyer, shouldBuyVolume, { from: bank })
     await buyToken.approve(dx.address, shouldBuyVolume, { from: buyer })
     await dx.deposit(buyToken.address, shouldBuyVolume, { from: buyer })
     const symbol = await buyToken.symbol()
@@ -611,9 +618,9 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       `Funding dxmm with ${amount} ${await token.symbol.call()} and depositing to DX`
     )
     if (token === weth) {
-      await weth.deposit({ value: amount, from: admin })
+      await weth.deposit({ value: amount, from: bank })
     }
-    await token.transfer(dxmm.address, amount, { from: admin })
+    await token.transfer(dxmm.address, amount, { from: bank })
     await dxmm.depositToDx(token.address, amount, { from: operator })
   }
 
@@ -635,11 +642,13 @@ contract('TestingKyberDxMarketMaker', async accounts => {
   }
 
   before('setup accounts', async () => {
-    admin = accounts[0]
-    seller1 = accounts[1]
-    buyer1 = accounts[2]
-    user = accounts[3]
-    operator = accounts[4]
+    admin = accounts[1]
+    user = accounts[2]
+    seller1 = accounts[3]
+    buyer1 = accounts[4]
+    operator = accounts[5]
+    lister = accounts[6]
+    bank = accounts[7]
 
     weth = await EtherToken.deployed()
     dxmm = await TestingKyberDxMarketMaker.deployed()
@@ -950,6 +959,76 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     thresholdTokenWei.should.be.eq.BN(thresholdNewAuctionToken)
   })
 
+  describe('#setKyberNetworkProxy', () => {
+    it('reject address 0', async () => {
+      await truffleAssert.reverts(
+        dxmm.setKyberNetworkProxy(
+          '0x0000000000000000000000000000000000000000',
+          { from: admin }
+        ),
+        'KyberNetworkProxy address cannot be 0'
+      )
+    })
+
+    it('sets the value', async () => {
+      const other = await TestingKyberDxMarketMaker.new(
+        await dxmm.dx() /* dx */,
+        '0x0000000000000000000000000000000000000001' /* kyberNetworkProxy */,
+        { from: admin }
+      )
+
+      await other.setKyberNetworkProxy(
+        '0x0000000000000000000000000000000000000005',
+        { from: admin }
+      )
+
+      const newAddress = await other.kyberNetworkProxy()
+      newAddress.should.equal('0x0000000000000000000000000000000000000005')
+    })
+
+    it('should return true', async () => {
+      const other = await TestingKyberDxMarketMaker.new(
+        await dxmm.dx() /* dx */,
+        '0x0000000000000000000000000000000000000001' /* kyberNetworkProxy */,
+        { from: admin }
+      )
+
+      const res = await other.setKyberNetworkProxy.call(
+        '0x0000000000000000000000000000000000000005',
+        { from: admin }
+      )
+
+      res.should.be.true
+    })
+
+    it('revert if not admin', async () => {
+      await truffleAssert.reverts(
+        dxmm.setKyberNetworkProxy('0x0000000000000000000000000000000000000000'),
+        'Operation limited to admin',
+        { from: user }
+      )
+    })
+
+    it('emits event', async () => {
+      const other = await TestingKyberDxMarketMaker.new(
+        await dxmm.dx() /* dx */,
+        '0x0000000000000000000000000000000000000001' /* kyberNetworkProxy */,
+        { from: admin }
+      )
+
+      const res = await other.setKyberNetworkProxy(
+        '0x0000000000000000000000000000000000000005',
+        { from: admin }
+      )
+
+      truffleAssert.eventEmitted(res, 'KyberNetworkProxyUpdated', ev => {
+        return (
+          ev.kyberNetworkProxy === '0x0000000000000000000000000000000000000005'
+        )
+      })
+    })
+  })
+
   describe('#calculateMissingTokenForAuctionStart', () => {
     it('thresholdNewAuctionToken works correctly for ETH', async () => {
       const dxPriceOracle = await PriceOracleInterface.at(
@@ -995,7 +1074,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       const knc = await deployTokenAddToDxAndClearFirstAuction()
 
       const otherSellerAlreadySellsSome = async kncSellAmount => {
-        await knc.transfer(seller1, kncSellAmount, { from: admin })
+        await knc.transfer(seller1, kncSellAmount, { from: bank })
         await knc.approve(dx.address, kncSellAmount, { from: seller1 })
         await dx.depositAndSell(knc.address, weth.address, kncSellAmount, {
           from: seller1
@@ -2504,11 +2583,11 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       const amount = web3.utils.toWei(new BN(10).pow(new BN(6)))
 
       // transfer KNC
-      await knc.transfer(dxmm.address, amount, { from: admin })
+      await knc.transfer(dxmm.address, amount, { from: bank })
 
       // transfer WETH
-      await weth.deposit({ value: amount, from: admin })
-      await weth.transfer(dxmm.address, amount, { from: admin })
+      await weth.deposit({ value: amount, from: bank })
+      await weth.transfer(dxmm.address, amount, { from: bank })
 
       await dxmm.step(knc.address, weth.address, { from: operator })
 

@@ -64,6 +64,27 @@ contract KyberDxMarketMaker is Withdrawable {
         kyberNetworkProxy = KyberNetworkProxy(_kyberNetworkProxy);
     }
 
+    event KyberNetworkProxyUpdated(
+        KyberNetworkProxy kyberNetworkProxy
+    );
+
+    function setKyberNetworkProxy(
+        KyberNetworkProxy _kyberNetworkProxy
+    )
+        public
+        onlyAdmin
+        returns (bool)
+    {
+        require(
+            address(_kyberNetworkProxy) != address(0),
+            "KyberNetworkProxy address cannot be 0"
+        );
+
+        kyberNetworkProxy = _kyberNetworkProxy;
+        emit KyberNetworkProxyUpdated(kyberNetworkProxy);
+        return true;
+    }
+
     event AmountDepositedToDx(
         address indexed token,
         uint amount
