@@ -47,6 +47,7 @@ let DEBUG = true
 let weth
 let dx
 let dxmm
+let kyberNetworkProxy
 
 let admin
 let seller1
@@ -72,6 +73,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       { from: bank }
     )
     dbg(`Deployed token number ${tokenDeployedIndex} at ${token.address}`)
+    await kyberNetworkProxy.setRate(token.address, 1555000000000000)
     return token
   }
 
@@ -437,7 +439,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     dbg(`next auction starts at ${nextAuctionStart}`)
     nextAuctionStart.should.not.be.eq.BN(1)
 
-    return await dx.getAuctionIndex(sellToken.address, buyToken.address)
+    return dx.getAuctionIndex(sellToken.address, buyToken.address)
   }
 
   const waitForTriggeredAuctionToStart = async (
@@ -653,6 +655,9 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     weth = await EtherToken.deployed()
     dxmm = await TestingKyberDxMarketMaker.deployed()
     dx = await DutchExchange.at(await dxmm.dx())
+    kyberNetworkProxy = await MockKyberNetworkProxy.at(
+      await dxmm.kyberNetworkProxy()
+    )
 
     await dxmm.addOperator(operator, { from: admin })
 

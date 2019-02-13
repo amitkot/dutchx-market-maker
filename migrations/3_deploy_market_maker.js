@@ -14,8 +14,6 @@ module.exports = async function(deployer, network, accounts) {
       console.log('Deployed DutchExchange to address %s', dx.address)
       const mockKyberNetworkProxy = await deployer.deploy(
         MockKyberNetworkProxy,
-        // TODO: use actual KyberNetworkProxy value!
-        1555000000000000,
         { from: admin }
       )
       console.log(
