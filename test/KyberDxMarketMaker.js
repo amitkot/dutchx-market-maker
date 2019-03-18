@@ -57,12 +57,13 @@ let operator
 let lister
 let bank
 
+let DX_AUCTION_START_WAITING_FOR_FUNDING
 let WAITING_FOR_FUNDING
 let WAITING_FOR_OPP_FUNDING
 let WAITING_FOR_SCHEDULED_AUCTION
 let AUCTION_IN_PROGRESS
-let DX_AUCTION_START_WAITING_FOR_FUNDING
 let WAITING_FOR_OPP_TO_FINISH
+let AUCTION_EXPIRED
 
 contract('TestingKyberDxMarketMaker', async accounts => {
   const deployToken = async () => {
@@ -665,8 +666,10 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     WAITING_FOR_OPP_FUNDING = await dxmm.WAITING_FOR_OPP_FUNDING()
     WAITING_FOR_SCHEDULED_AUCTION = await dxmm.WAITING_FOR_SCHEDULED_AUCTION()
     AUCTION_IN_PROGRESS = await dxmm.AUCTION_IN_PROGRESS()
-    DX_AUCTION_START_WAITING_FOR_FUNDING = await dxmm.DX_AUCTION_START_WAITING_FOR_FUNDING()
     WAITING_FOR_OPP_TO_FINISH = await dxmm.WAITING_FOR_OPP_TO_FINISH()
+    AUCTION_EXPIRED = await dxmm.AUCTION_EXPIRED()
+
+    DX_AUCTION_START_WAITING_FOR_FUNDING = await dxmm.DX_AUCTION_START_WAITING_FOR_FUNDING()
   })
 
   it('admin should deploy token, add to dx, and conclude the first auction', async () => {
@@ -1227,6 +1230,57 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
       const state = await dxmm.getAuctionState(knc.address, weth.address)
       state.should.be.eq.BN(WAITING_FOR_FUNDING)
+    })
+
+    it('should detect expired auctions with only opposite side', async () => {
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+      const TIME_25_HOURS_IN_SECONDS = 60 * 60 * 25
+      // wait more than 24 hours so that an auction could be funded only in
+      // one of the directions before starting
+      await waitTimeInSeconds(TIME_25_HOURS_IN_SECONDS)
+
+      // Fund the opposite direction
+      await fundDxmmAndDepositToDx(weth)
+      await dxmm.testFundAuctionDirection(weth.address, knc.address)
+
+      const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+
+      // wait for opposite direction auction to end
+      await waitTimeInSeconds(TIME_25_HOURS_IN_SECONDS)
+
+      const state = await dxmm.getAuctionState(knc.address, weth.address)
+      const oppState = await dxmm.getAuctionState(weth.address, knc.address)
+      const auctionIndexExpired = await dx.getAuctionIndex(
+        knc.address,
+        weth.address
+      )
+
+      state.should.be.eq.BN(AUCTION_EXPIRED)
+      oppState.should.be.eq.BN(AUCTION_EXPIRED)
+      auctionIndexExpired.should.be.eq.BN(auctionIndex)
+    })
+
+    it('should detect expired auctions', async () => {
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+      await dxmmFundDepositTriggerBothSides(knc, weth)
+
+      const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+
+      // wait for opposite direction auction to end
+      const TIME_25_HOURS_IN_SECONDS = 60 * 60 * 25
+      await waitTimeInSeconds(TIME_25_HOURS_IN_SECONDS)
+
+      const state = await dxmm.getAuctionState(knc.address, weth.address)
+      const oppState = await dxmm.getAuctionState(weth.address, knc.address)
+      const auctionIndexExpired = await dx.getAuctionIndex(
+        knc.address,
+        weth.address
+      )
+
+      state.should.be.eq.BN(AUCTION_EXPIRED)
+      oppState.should.be.eq.BN(AUCTION_EXPIRED)
+      auctionIndexExpired.should.be.eq.BN(auctionIndex)
     })
   })
 
@@ -2172,7 +2226,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       await dxmm.testFundAuctionDirection.call(knc.address, weth.address)
       const res = await dxmm.testFundAuctionDirection(knc.address, weth.address)
 
-      truffleAssert.eventEmitted(res, 'AuctionTriggered', ev => {
+      truffleAssert.eventEmitted(res, 'AuctionDirectionFunded', ev => {
         return (
           ev.sellToken === knc.address &&
           ev.buyToken === weth.address &&
@@ -2285,7 +2339,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         from: operator
       })
 
-      truffleAssert.eventEmitted(res, 'AuctionTriggered', ev => {
+      truffleAssert.eventEmitted(res, 'AuctionDirectionFunded', ev => {
         return (
           ev.sellToken === knc.address &&
           ev.buyToken === weth.address &&
@@ -2356,7 +2410,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       })
 
       // TODO: check that NO EVENT AT ALL has been emitted
-      truffleAssert.eventNotEmitted(res, 'AuctionTriggered')
+      truffleAssert.eventNotEmitted(res, 'AuctionDirectionFunded')
       truffleAssert.eventNotEmitted(res, 'BoughtInAuction')
     })
 
@@ -2411,7 +2465,7 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       })
 
       // TODO: check that NO EVENT AT ALL has been emitted
-      truffleAssert.eventNotEmitted(res, 'AuctionTriggered')
+      truffleAssert.eventNotEmitted(res, 'AuctionDirectionFunded')
       truffleAssert.eventNotEmitted(res, 'BoughtInAuction')
     })
 
@@ -2634,6 +2688,39 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       })
 
       shouldAct.should.be.false
+    })
+
+    it('step after opposite direction ended with no buyers should close auction', async () => {
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+      const TIME_25_HOURS_IN_SECONDS = 60 * 60 * 25
+      // wait more than 24 hours so that an auction could be funded only in
+      // one of the directions before starting
+      await waitTimeInSeconds(TIME_25_HOURS_IN_SECONDS)
+
+      // Fund the opposite direction
+      await fundDxmmAndDepositToDx(weth)
+      await dxmm.testFundAuctionDirection(weth.address, knc.address)
+
+      const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+
+      // wait for opposite direction auction to end
+      await waitTimeInSeconds(TIME_25_HOURS_IN_SECONDS)
+
+      await fundDxmmAndDepositToDx(knc)
+      const shouldAct = await dxmm.step.call(knc.address, weth.address, {
+        from: operator
+      })
+      const res = await dxmm.step(knc.address, weth.address, {
+        from: operator
+      })
+
+      shouldAct.should.be.true
+      const newAuctionIndex = await dx.getAuctionIndex(
+        knc.address,
+        weth.address
+      )
+      newAuctionIndex.should.be.eq.BN(auctionIndex.addn(1))
     })
 
     it('several cycles')

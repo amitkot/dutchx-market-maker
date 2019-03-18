@@ -29,7 +29,8 @@ contract KyberDxMarketMaker is Withdrawable {
         WAITING_FOR_OPP_FUNDING,
         WAITING_FOR_SCHEDULED_AUCTION,
         AUCTION_IN_PROGRESS,
-        WAITING_FOR_OPP_TO_FINISH
+        WAITING_FOR_OPP_TO_FINISH,
+        AUCTION_EXPIRED
     }
 
     // Exposing the enum values to external tools.
@@ -38,6 +39,7 @@ contract KyberDxMarketMaker is Withdrawable {
     AuctionState constant public WAITING_FOR_SCHEDULED_AUCTION = AuctionState.WAITING_FOR_SCHEDULED_AUCTION;
     AuctionState constant public AUCTION_IN_PROGRESS = AuctionState.AUCTION_IN_PROGRESS;
     AuctionState constant public WAITING_FOR_OPP_TO_FINISH = AuctionState.WAITING_FOR_OPP_TO_FINISH;
+    AuctionState constant public AUCTION_EXPIRED = AuctionState.AUCTION_EXPIRED;
 
     DutchExchange public dx;
     EtherToken public weth;
@@ -228,6 +230,12 @@ contract KyberDxMarketMaker is Withdrawable {
             return false;
         }
 
+        if (state == AuctionState.AUCTION_EXPIRED) {
+            dx.closeTheoreticalClosedAuction(sellToken, buyToken, auctionIndex);
+            dx.closeTheoreticalClosedAuction(buyToken, sellToken, auctionIndex);
+            return true;
+        }
+
         // Should be unreachable.
         revert("Unknown auction state");
     }
@@ -354,15 +362,22 @@ contract KyberDxMarketMaker is Withdrawable {
             // interested in this direction.
             if (calculateMissingTokenForAuctionStart(sellToken, buyToken) > 0) {
                 return AuctionState.WAITING_FOR_FUNDING;
+            } else {
+                return AuctionState.WAITING_FOR_OPP_FUNDING;
             }
-
-            return AuctionState.WAITING_FOR_OPP_FUNDING;
         }
 
         // DutchExchange logic uses auction start time.
         /* solhint-disable not-rely-on-time */
         if (auctionStart > now) {
             return AuctionState.WAITING_FOR_SCHEDULED_AUCTION;
+        }
+
+        // If over 24 hours have passed, the auction is no longer viable and
+        // should be closed.
+        /* solhint-disable not-rely-on-time */
+        if (now - auctionStart > 24 hours) {
+            return AuctionState.AUCTION_EXPIRED;
         }
 
         uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
@@ -475,7 +490,7 @@ contract KyberDxMarketMaker is Withdrawable {
         }
     }
 
-    event AuctionTriggered(
+    event AuctionDirectionFunded(
         address indexed sellToken,
         address indexed buyToken,
         uint indexed auctionIndex,
@@ -508,7 +523,7 @@ contract KyberDxMarketMaker is Withdrawable {
         dx.postSellOrder(sellToken, buyToken, auctionIndex, missingTokensWithFee);
         lastParticipatedAuction[sellToken][buyToken] = auctionIndex;
 
-        emit AuctionTriggered(
+        emit AuctionDirectionFunded(
             sellToken,
             buyToken,
             auctionIndex,
@@ -553,15 +568,8 @@ contract KyberDxMarketMaker is Withdrawable {
             auctionIndex,
             address(this)
         );
+
         if (buyTokenAmount == 0) {
-            // If price has dropped to 0 we buy in the auction to clear it.
-            uint num;
-            (num,) = dx.getCurrentAuctionPrice(sellToken, buyToken, auctionIndex);
-            if (num == 0) {
-                dx.postBuyOrder(sellToken, buyToken, auctionIndex, buyTokenAmount);
-                emit BoughtInAuction(sellToken, buyToken, auctionIndex, buyTokenAmount, true /* willClearAuction */);
-                return true;
-            }
             return false;
         }
 
