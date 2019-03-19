@@ -27,20 +27,25 @@ contract MockKyberNetworkProxy {
         require(rate > 0, "Rate must be larger than 0");
 
         rates[address(token)][KYBER_ETH_ADDRESS] = rate;
-				// As rates are returned in (num=rate, den=10**18) format, we multiply the
-				// reverse rate (of 10**18 / rate) by 10**18 to offset the later division.
+        // As rates are returned in (num=rate, den=10**18) format, we multiply the
+        // reverse rate (of 10**18 / rate) by 10**18 to offset the later division.
         rates[KYBER_ETH_ADDRESS][address(token)] = 10**36 / rate;
 
         emit RateUpdated(token, rate);
     }
 
-    function getExpectedRate(ERC20 src, ERC20 dest, uint srcQty)
+    function getExpectedRate(
+        ERC20 src,
+        ERC20 dest,
+        uint srcQty
+    )
         public
         view
-        returns (uint expectedRate, uint slippageRate) {
-            // Removing compilation warnings
-            srcQty;
+        returns (uint expectedRate, uint slippageRate)
+    {
+        // Removing compilation warnings
+        srcQty;
 
-            return (rates[address(src)][address(dest)], 0);
-        }
+        return (rates[address(src)][address(dest)], 0);
+    }
 }

@@ -187,7 +187,7 @@ contract KyberDxMarketMaker is Withdrawable {
         returns (bool)
     {
         // KyberNetworkProxy.getExpectedRate() always returns a rate between
-        // tokens (and not between token wei as DutchX does.
+        // tokens (and not between token wei as DutchX does).
         // For this reason the rate is currently compatible only for tokens that
         // have 18 decimals and is handled as though it is rate / 10**18.
         // TODO: handle tokens with number of decimals other than 18.
