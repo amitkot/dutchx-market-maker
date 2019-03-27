@@ -250,25 +250,7 @@ contract KyberDxMarketMaker is Withdrawable {
         view
         returns (bool)
     {
-        // TODO: add similar requires here and in other places?
-        // R1: auction must not have cleared
-        // require(closingPrices[sellToken][buyToken][auctionIndex].den == 0);
-
-        // uint auctionStart = getAuctionStart(sellToken, buyToken);
-
-        // R2
-        // require(auctionStart <= now);
-
-        // R4
-        // require(auctionIndex == getAuctionIndex(sellToken, buyToken));
-
-        // R5: auction must not be in waiting period
-        // require(auctionStart > AUCTION_START_WAITING_FOR_FUNDING);
-
         uint buyVolume = dx.buyVolumes(sellToken, buyToken);
-
-        // R7
-        // require(add(buyVolume, amount) < 10 ** 30);
 
         // Overbuy is when a part of a buy order clears an auction
         // In that case we only process the part before the overbuy
