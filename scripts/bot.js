@@ -1,7 +1,7 @@
 const fs = require('fs')
 const Web3 = require('web3')
 // TODO: maybe create web3 later?
-const web3 = new Web3('http://', {})
+const web3 = new Web3('http://')
 const HDWalletProvider = require('truffle-hdwallet-provider')
 const yargs = require('yargs')
 
@@ -64,7 +64,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 // XXX: only for development
 async function devNetworkWaitTimeInSeconds(seconds) {
   const sendPromise = (method, params) => {
-    return new Promise(function(fulfill, reject) {
+    return new Promise(function(resolve, reject) {
       web3.currentProvider.send(
         {
           jsonrpc: '2.0',
@@ -76,7 +76,7 @@ async function devNetworkWaitTimeInSeconds(seconds) {
           if (err) {
             reject(err)
           } else {
-            fulfill(result)
+            resolve(result)
           }
         }
       )
@@ -111,7 +111,7 @@ const _getNetworkURL = net => {
 
     case 'main':
     case 'live':
-      return 'https://main.infura.io/'
+      return 'https://mainnet.infura.io/'
 
     case 'development':
     default:
@@ -123,28 +123,25 @@ const _runMarketMaker = async (
   web3,
   sellTokenAddress,
   buyTokenAddress,
-  gasPriceGwei
+  gasPriceGwei,
+  maxGasPriceFactor
 ) => {
   const account = (await web3.eth.getAccounts())[0]
   logger.info(`Running from account: ${account}`)
 
   // Signs and sends transactions.
-  const sendTx = async (txObject, value) => {
+  const sendTx = async (txObject, to, value = 0) => {
     logger.debug('Preparing transaction')
-    const gasPrice = web3.utils
-      .toBN(gasPriceGwei)
-      .mul(web3.utils.toBN(10 ** 9))
-      .toNumber()
     const nonce = await web3.eth.getTransactionCount(account)
     const chainId = await web3.eth.net.getId()
-    const txTo = txObject._parent.options.address
+    const txTo = to
 
     let gasLimit
     try {
       gasLimit = await txObject.estimateGas()
     } catch (e) {
-      logger.debug(`Error in estimateGas: ${e}`)
       gasLimit = 1000 * 1000
+      logger.debug(`estimateGas failed, using default limit (${gasLimit})`)
     }
 
     if (txTo !== null) {
@@ -154,26 +151,99 @@ const _runMarketMaker = async (
     const txData = txObject.encodeABI()
     const txFrom = account
 
-    const tx = {
-      from: txFrom,
-      to: txTo,
-      nonce: nonce,
-      data: txData,
-      value: value,
-      gas: gasLimit,
-      chainId: chainId,
-      gasPrice: gasPrice
+    const calcGasPrice = iteration => {
+      // TODO: extract to settings
+      const TX_RESEND_GAS_PRICE_FACTOR = 1.2
+
+      return web3.utils
+        .toBN(gasPriceGwei * TX_RESEND_GAS_PRICE_FACTOR ** iteration)
+        .mul(web3.utils.toBN(10 ** 9))
+        .toNumber()
     }
-    logger.debug(`tx: ${str(tx)}`)
 
-    const signedTx = await web3.eth.signTransaction(tx)
-    logger.debug(`signed tx: ${str(signedTx)}`)
+    const prepareSignedTx = async gasPrice => {
+      const tx = {
+        from: txFrom,
+        to: txTo,
+        nonce: nonce,
+        data: txData,
+        value: value,
+        gas: gasLimit,
+        chainId: chainId,
+        gasPrice: gasPrice
+      }
+      logger.debug(`tx: ${str(tx)}`)
+      return web3.eth.signTransaction(tx)
+    }
 
-    const receipt = await web3.eth.sendSignedTransaction(signedTx.raw, {
-      from: account
+    let iteration = 0
+    let gasPrice
+
+    // Returning a promise to make the the sending of the tx awaitable
+    return new Promise(async (resolve, reject) => {
+      try {
+        gasPrice = calcGasPrice(iteration)
+        if (gasPrice > maxGasPriceFactor * gasPriceGwei * 10 ** 9) {
+          // Cannot increase gas price any more
+          const msg = 'Cannot increase gas price any more'
+          logger.warning(msg)
+          reject(msg)
+        }
+
+        logger.debug(`gasPrice is ${gasPrice}`)
+
+        const signedTx = await prepareSignedTx(gasPrice)
+        logger.debug(`signed tx: ${str(signedTx)}`)
+
+        web3.eth
+          .sendSignedTransaction(signedTx.raw, { from: account })
+          .once('transactionHash', hash => {
+            logger.debug(`onceTransactionHash hash: ${hash}`)
+          })
+          .once('receipt', receipt => {
+            logger.debug(`onceReceipt receipt: ${str(receipt)}`)
+          })
+          // .on('confirmation', (confirmationNumber, receipt) => {
+          //   logger.debug(
+          //     `onConfirmation ConfirmationNumber: ${confirmationNumber}`
+          //   )
+          //   logger.debug(`onConfirmation Receipt: ${receipt}`)
+          // })
+          .on('error', error => {
+            // confirmation timeout
+            if (
+              error.message.startsWith(
+                'Timeout exceeded during the transaction confirmation process'
+              )
+            ) {
+              logger.debug(`TX confirmation timout, try increasing gas price`)
+              iteration++
+              // previous tx already confirmed so nonce no longer available
+            } else if (
+              error.message.startsWith(
+                "Error: the tx doesn't have the correct nonce."
+              )
+            ) {
+              logger.debug(
+                'Previously sent tx with this nonce already confirmed'
+              )
+            } else {
+              logger.error(
+                `onError during sendSignedTransaction: "${error}", returning`
+              )
+              reject(error)
+            }
+          })
+          .then(receipt => {
+            logger.debug(`then called with receipt: ${str(receipt)}`)
+            logger.debug('done sending tx')
+            resolve(receipt)
+          })
+      } catch (error) {
+        logger.error(`Error during sendTx: "${error}", returning`)
+        reject(error)
+      }
     })
-    logger.debug(`sent transaction: ${str(receipt)}`)
-    return receipt
   }
 
   // Loads the contracts that the bot interacts with
@@ -218,7 +288,9 @@ const _runMarketMaker = async (
     'AUCTION_IN_PROGRESS'
   auctionState[await dxmm.methods.WAITING_FOR_OPP_TO_FINISH().call()] =
     'WAITING_FOR_OPP_TO_FINISH'
+  auctionState[await dxmm.methods.AUCTION_EXPIRED().call()] = 'AUCTION_EXPIRED'
 
+  // TODO: remove from script
   const verifyHasEnoughTokens = async (sellToken, buyToken) => {
     logger.info('Checking dxmm has enough sell tokens')
     const missingTokens = await dxmm.methods
@@ -259,12 +331,14 @@ const _runMarketMaker = async (
       // if (tokenBalance < missingOnDx) {
       //   logger.verbose('Transfering KNC to dxmm')
       //   await sendTx(
-      //     sellToken.methods.transfer(dxmm.options.address, missingTokensWithFee)
+      //     sellToken.methods.transfer(dxmm.options.address, missingTokensWithFee),
+      //     dxmm.options.address
       //   )
       // }
     }
   }
 
+  // TODO: remove from script
   const verifyHasEnoughWeth = async (sellToken, buyToken) => {
     logger.info('Check dxmm has enough WETH')
     const auctionIndex = await dx.methods
@@ -304,11 +378,13 @@ const _runMarketMaker = async (
       // logger.info('Sending WETH to dxmm balance on dx')
       //
       // logger.verbose('Deposit WETH -> WETH')
-      // await sendTx(buyToken.methods.deposit(), requiredBuyTokens /* value */)
+      // await sendTx(buyToken.methods.deposit(),
+      // dxmm.options.address),
+      // requiredBuyTokens /* value */,
       //
       // logger.verbose('Transfer WETH to dxmm')
       // await sendTx(
-      //   buyToken.methods.transfer(dxmm.options.address, requiredBuyTokens)
+      //   buyToken.methods.transfer(dxmm.options.address, requiredBuyTokens), dxmm.options.address
       // )
     }
   }
@@ -375,43 +451,85 @@ const _runMarketMaker = async (
   let shouldAct
 
   while (true) {
-    shouldAct = await dxmm.methods
-      .step(sellToken.options.address, buyToken.options.address)
-      .call({ from: account })
+    try {
+      // logger.debug(
+      // `step.call(${sellToken.options.address}, ${buyToken.options.address})`
+      // )
+      console.log(1)
+      try {
+        // TODO: New web3js versions cannot call() a state-changing function:
+        // https://github.com/ethereum/web3.js/issues/2411
+        // shouldAct = await dxmm.methods
+        // .step(sellToken.options.address, buyToken.options.address)
+        // .call({ from: account })
+        let encoded = await dxmm.methods
+          .step(sellToken.options.address, buyToken.options.address)
+          .encodeABI()
+        shouldAct = Boolean(
+          Number(
+            await web3.eth.call({
+              to: dxmm.options.address,
+              from: account,
+              data: encoded
+            })
+          )
+        )
+      } catch (error) {
+        console.log(`1.1 error: ${error}`)
+      }
 
-    logger.verbose(await _prepareStatus(sellToken, buyToken, shouldAct))
+      console.log(2)
+      logger.verbose(await _prepareStatus(sellToken, buyToken, shouldAct))
 
-    if (shouldAct) {
-      await sendTx(
-        dxmm.methods.step(sellToken.options.address, buyToken.options.address)
-      )
+      console.log(3)
+      // XXX
+      // shouldAct = true
+      if (shouldAct) {
+        console.log(4)
+        await sendTx(
+          dxmm.methods.step(
+            sellToken.options.address,
+            buyToken.options.address
+          ),
+          dxmm.options.address /* to */
+        )
 
-      state = await dxmm.methods
-        .getAuctionState(sellToken.options.address, buyToken.options.address)
-        .call()
+        console.log(5)
+        state = await dxmm.methods
+          .getAuctionState(sellToken.options.address, buyToken.options.address)
+          .call()
 
-      logger.verbose(
-        `State after acting is ${
-          auctionState[state]
-        }, dx balances: {sell: ${await dx.methods
-          .balances(sellToken.options.address, dxmm.options.address)
-          .call()}, buy: ${await dx.methods
-          .balances(buyToken.options.address, dxmm.options.address)
-          .call()}}`
-      )
+        console.log(6)
+        logger.verbose(
+          `State after acting is ${
+            auctionState[state]
+          }, dx balances: {sell: ${await dx.methods
+            .balances(sellToken.options.address, dxmm.options.address)
+            .call()}, buy: ${await dx.methods
+            .balances(buyToken.options.address, dxmm.options.address)
+            .call()}}`
+        )
+      }
+
+      console.log(7)
+      await sleep(SLEEP_TIME)
+
+      // XXX: only in development
+      // XXX: making things go fast
+      // await devNetworkWaitTimeInSeconds(60 * 60)
+    } catch (error) {
+      console.log(8)
+      logger.error(`Caught error during loop: ${error}`)
+      await sleep(SLEEP_TIME)
     }
-
-    await sleep(SLEEP_TIME)
-
-    // XXX: only in development
-    // XXX: making things go fast
-    // await devNetworkWaitTimeInSeconds(5 * 60)
   }
 }
 
 const runWithWeb3 = async (network, whatToRun) => {
   const provider = _getProvider(network, _getNetworkURL(network))
   web3.setProvider(provider)
+  // TODO: extract transactionPollingTimeout as a configurable param
+  web3.options = { transactionPollingTimeout: 1 }
 
   await whatToRun(web3)
 
@@ -436,8 +554,15 @@ yargs
         .option('gasPriceGwei', {
           demandOption: false,
           default: '5',
-          describe: 'Gas price in Gwei',
-          type: 'int'
+          describe: 'Initial gas price in Gwei',
+          type: 'number'
+        })
+        .option('maxGasPriceFactor', {
+          demandOption: false,
+          default: '2',
+          describe:
+            'Maximum factor for increased gas price (e.g. for initial 5 Gwei + factor 2 -> max is 10 Gwei)',
+          type: 'number'
         })
         .option('st', {
           alias: 'sellToken',
@@ -454,7 +579,13 @@ yargs
     },
     async function(argv) {
       await runWithWeb3(argv.net, web3 => {
-        _runMarketMaker(web3, argv.sellToken, argv.buyToken, argv.gasPriceGwei)
+        _runMarketMaker(
+          web3,
+          argv.sellToken,
+          argv.buyToken,
+          argv.gasPriceGwei,
+          argv.maxGasPriceFactor
+        )
       })
     }
   )

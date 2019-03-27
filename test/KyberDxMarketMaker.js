@@ -42,7 +42,7 @@ const MockKyberNetworkProxy = artifacts.require('MockKyberNetworkProxy')
 
 let tokenDeployedIndex = 0
 
-let DEBUG = true
+let DEBUG = false
 
 const ETH_TOKEN_ADDRESS = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
 
@@ -1049,7 +1049,9 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
       const dxmmEthThreshold = await dxmm.thresholdNewAuctionToken(weth.address)
 
-      dxmmEthThreshold.should.be.eq.BN(auctionUsdThreshold.div(usdEthPrice))
+      dxmmEthThreshold.should.be.eq.BN(
+        auctionUsdThreshold.div(usdEthPrice).addn(1)
+      )
     })
 
     it('calculate missing tokens in wei to start next auction: sellToken is KNC', async () => {
@@ -1283,6 +1285,24 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       state.should.be.eq.BN(AUCTION_EXPIRED)
       oppState.should.be.eq.BN(AUCTION_EXPIRED)
       auctionIndexExpired.should.be.eq.BN(auctionIndex)
+    })
+
+    it('over 24 hours after auction closes, opposite side funded - this side should required funding as well', async () => {
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+      // Over 24 hours pass
+      const TIME_25_HOURS_IN_SECONDS = 60 * 60 * 25
+      await waitTimeInSeconds(TIME_25_HOURS_IN_SECONDS)
+
+      // Fund the opposite direction
+      await fundDxmmAndDepositToDx(weth)
+      await dxmm.testFundAuctionDirection(weth.address, knc.address)
+
+      const state = await dxmm.getAuctionState(knc.address, weth.address)
+      const oppState = await dxmm.getAuctionState(weth.address, knc.address)
+
+      state.should.be.eq.BN(WAITING_FOR_FUNDING)
+      oppState.should.be.eq.BN(WAITING_FOR_SCHEDULED_AUCTION)
     })
   })
 

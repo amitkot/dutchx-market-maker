@@ -20,7 +20,6 @@
   },
   "homepage": "https://github.com/KyberNetwork/pay-widget-contract#readme",
   "dependencies": {
-    "@gnosis.pm/dx-contracts": "^2.0.0-RC15",
     "bn.js": "^4.11.8",
     "compare-versions": "^3.1.0",
     "dotenv": "^6.2.0",
@@ -35,6 +34,7 @@
     "yargs": "^11.1.0"
   },
   "devDependencies": {
+    "@gnosis.pm/dx-contracts": "^2.0.0",
     "bn-chai": "^1.0.1",
     "chai": "^4.1.2",
     "chai-as-promised": "^7.1.1",

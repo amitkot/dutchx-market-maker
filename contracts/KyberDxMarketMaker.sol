@@ -370,7 +370,15 @@ contract KyberDxMarketMaker is Withdrawable {
         // DutchExchange logic uses auction start time.
         /* solhint-disable not-rely-on-time */
         if (auctionStart > now) {
-            return AuctionState.WAITING_FOR_SCHEDULED_AUCTION;
+            // After 24 hours have passed since last auction closed,
+            // DutchExchange will trigger a new auction even if only the
+            // opposite side is funded.
+            // In these cases we want this side to be funded as well.
+            if (calculateMissingTokenForAuctionStart(sellToken, buyToken) > 0) {
+                return AuctionState.WAITING_FOR_FUNDING;
+            } else {
+                return AuctionState.WAITING_FOR_SCHEDULED_AUCTION;
+            }
         }
 
         // If over 24 hours have passed, the auction is no longer viable and
