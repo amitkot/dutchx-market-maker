@@ -1,43 +1,20 @@
 const fs = require('fs')
 const Web3 = require('web3')
-// TODO: maybe create web3 later?
+// TODO: maybe create the web3 instance later?
 const web3 = new Web3('http://')
 const HDWalletProvider = require('truffle-hdwallet-provider')
 const yargs = require('yargs')
+const winston = require('winston')
 
 // Setup environment variables from .env file
 require('dotenv').config()
-
-const winston = require('winston')
-const logger = winston.createLogger({
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.cli(),
-    winston.format.printf(info => {
-      return `${info.timestamp} ${info.level}: ${info.message}`
-    })
-  ),
-  transports: [new winston.transports.Console({ level: 'debug' })]
-})
-
-if (process.env.LOGGLY_TOKEN && process.env.LOGGLY_SUBDOMAIN) {
-  const { Loggly } = require('winston-loggly-bulk')
-  logger.add(
-    new Loggly({
-      inputToken: process.env.LOGGLY_TOKEN,
-      subdomain: process.env.LOGGLY_SUBDOMAIN,
-      tags: ['dxmm'],
-      json: true
-    })
-  )
-}
 
 const MNEMONIC = process.env.MNEMONIC
 const PRIVATE = process.env.PRIVATE
 
 const DXMM_ADDRESS = process.env.DXMM_ADDRESS
 if (typeof DXMM_ADDRESS === 'undefined') {
-  logger.error('Please configure DXMM_ADDRESS')
+  console.log('Please configure DXMM_ADDRESS')
   process.exit(1)
 }
 
@@ -47,6 +24,35 @@ const SLEEP_TIME = process.env.SLEEP_TIME || 10000
 const ERC20_COMPILED = 'build/contracts/ERC20WithSymbol.json'
 const DXMM_COMPILED = 'build/contracts/KyberDxMarketMaker.json'
 const DX_COMPILED = 'build/contracts/DutchExchange.json'
+
+// setup is called later when we know sell and buy token names
+let logger
+
+const _setupLogger = (sellToken, buyToken) => {
+  logger = winston.createLogger({
+    format: winston.format.combine(
+      winston.format.timestamp(),
+      winston.format.cli(),
+      winston.format.label({ label: `${sellToken}->${buyToken}` }),
+      winston.format.printf(({ level, message, label, timestamp }) => {
+        return `${timestamp} [${label}] ${level}: ${message}`
+      })
+    ),
+    transports: [new winston.transports.Console({ level: 'debug' })]
+  })
+
+  if (process.env.LOGGLY_TOKEN && process.env.LOGGLY_SUBDOMAIN) {
+    const { Loggly } = require('winston-loggly-bulk')
+    logger.add(
+      new Loggly({
+        inputToken: process.env.LOGGLY_TOKEN,
+        subdomain: process.env.LOGGLY_SUBDOMAIN,
+        tags: ['dxmm'],
+        json: true
+      })
+    )
+  }
+}
 
 // TODO: move to util file
 const str = data => {
@@ -126,6 +132,50 @@ const _runMarketMaker = async (
   gasPriceGwei,
   maxGasPriceFactor
 ) => {
+  // Loads the contracts that the bot interacts with
+  // TODO: compile the contracts as part of this script
+  const _loadContracts = async () => {
+    const _loadContract = (abiFilename, address) => {
+      const abiFile = fs.readFileSync(abiFilename, { encoding: 'utf-8' })
+      const abi = JSON.parse(abiFile)['abi']
+      return new web3.eth.Contract(abi, address)
+    }
+
+    const dxmm = _loadContract(DXMM_COMPILED, DXMM_ADDRESS)
+    const contracts = {
+      dxmm: dxmm,
+      sellToken: _loadContract(ERC20_COMPILED, sellTokenAddress),
+      buyToken: _loadContract(ERC20_COMPILED, buyTokenAddress),
+      dx: _loadContract(DX_COMPILED, await dxmm.methods.dx().call())
+    }
+
+    _setupLogger(
+      await contracts.sellToken.methods.symbol().call() /* sell */,
+      await contracts.buyToken.methods.symbol().call() /* buy */
+    )
+
+    Object.entries(contracts).forEach(([key, value]) => {
+      logger.verbose(`${key} address:\t${value.options.address}`)
+    })
+    return contracts
+  }
+
+  const { dxmm, sellToken, buyToken, dx } = await _loadContracts()
+
+  // Setting up useful data from the dxmm contract.
+  const auctionState = {}
+  auctionState[await dxmm.methods.WAITING_FOR_FUNDING().call()] =
+    'WAITING_FOR_FUNDING'
+  auctionState[await dxmm.methods.WAITING_FOR_OPP_FUNDING().call()] =
+    'WAITING_FOR_OPP_FUNDING'
+  auctionState[await dxmm.methods.WAITING_FOR_SCHEDULED_AUCTION().call()] =
+    'WAITING_FOR_SCHEDULED_AUCTION'
+  auctionState[await dxmm.methods.AUCTION_IN_PROGRESS().call()] =
+    'AUCTION_IN_PROGRESS'
+  auctionState[await dxmm.methods.WAITING_FOR_OPP_TO_FINISH().call()] =
+    'WAITING_FOR_OPP_TO_FINISH'
+  auctionState[await dxmm.methods.AUCTION_EXPIRED().call()] = 'AUCTION_EXPIRED'
+
   const account = (await web3.eth.getAccounts())[0]
   logger.info(`Running from account: ${account}`)
 
@@ -245,50 +295,6 @@ const _runMarketMaker = async (
       }
     })
   }
-
-  // Loads the contracts that the bot interacts with
-  // TODO: compile the contracts as part of this script
-  const _loadContracts = async () => {
-    const _loadContract = (abiFilename, address) => {
-      const abiFile = fs.readFileSync(abiFilename, { encoding: 'utf-8' })
-      const abi = JSON.parse(abiFile)['abi']
-      return new web3.eth.Contract(abi, address)
-    }
-
-    const dxmm = _loadContract(DXMM_COMPILED, DXMM_ADDRESS)
-
-    logger.verbose('loading contracts')
-    const contracts = {
-      dxmm: dxmm,
-      sellToken: _loadContract(ERC20_COMPILED, sellTokenAddress),
-      buyToken: _loadContract(ERC20_COMPILED, buyTokenAddress),
-      dx: _loadContract(DX_COMPILED, await dxmm.methods.dx().call())
-    }
-    Object.entries(contracts).forEach(([key, value]) => {
-      logger.verbose(`${key} address:\t${value.options.address}`)
-    })
-    return contracts
-  }
-  const { dxmm, sellToken, buyToken, dx } = await _loadContracts()
-  logger.info(
-    `Handle ${await sellToken.methods
-      .symbol()
-      .call()} -> ${await buyToken.methods.symbol().call()}`
-  )
-
-  // Setting up useful data from the dxmm contract.
-  const auctionState = {}
-  auctionState[await dxmm.methods.WAITING_FOR_FUNDING().call()] =
-    'WAITING_FOR_FUNDING'
-  auctionState[await dxmm.methods.WAITING_FOR_OPP_FUNDING().call()] =
-    'WAITING_FOR_OPP_FUNDING'
-  auctionState[await dxmm.methods.WAITING_FOR_SCHEDULED_AUCTION().call()] =
-    'WAITING_FOR_SCHEDULED_AUCTION'
-  auctionState[await dxmm.methods.AUCTION_IN_PROGRESS().call()] =
-    'AUCTION_IN_PROGRESS'
-  auctionState[await dxmm.methods.WAITING_FOR_OPP_TO_FINISH().call()] =
-    'WAITING_FOR_OPP_TO_FINISH'
-  auctionState[await dxmm.methods.AUCTION_EXPIRED().call()] = 'AUCTION_EXPIRED'
 
   // TODO: remove from script
   const verifyHasEnoughTokens = async (sellToken, buyToken) => {
@@ -452,28 +458,25 @@ const _runMarketMaker = async (
 
   while (true) {
     try {
-      // logger.debug(
-      // `step.call(${sellToken.options.address}, ${buyToken.options.address})`
-      // )
       console.log(1)
       try {
         // TODO: New web3js versions cannot call() a state-changing function:
         // https://github.com/ethereum/web3.js/issues/2411
-        // shouldAct = await dxmm.methods
+        // let encoded = await dxmm.methods
         // .step(sellToken.options.address, buyToken.options.address)
-        // .call({ from: account })
-        let encoded = await dxmm.methods
+        // .encodeABI()
+        // shouldAct = Boolean(
+        // Number(
+        // await web3.eth.call({
+        // to: dxmm.options.address,
+        // from: account,
+        // data: encoded
+        // })
+        // )
+        // )
+        shouldAct = await dxmm.methods
           .step(sellToken.options.address, buyToken.options.address)
-          .encodeABI()
-        shouldAct = Boolean(
-          Number(
-            await web3.eth.call({
-              to: dxmm.options.address,
-              from: account,
-              data: encoded
-            })
-          )
-        )
+          .call({ from: account })
       } catch (error) {
         console.log(`1.1 error: ${error}`)
       }
@@ -482,8 +485,6 @@ const _runMarketMaker = async (
       logger.verbose(await _prepareStatus(sellToken, buyToken, shouldAct))
 
       console.log(3)
-      // XXX
-      // shouldAct = true
       if (shouldAct) {
         console.log(4)
         await sendTx(
