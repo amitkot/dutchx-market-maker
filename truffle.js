@@ -62,7 +62,7 @@ function truffleConfig({
       solc: {
         // version: "native"
         version: '0.5.2',
-        docker: true
+        docker: false
       }
     },
     solc: {
