@@ -21,9 +21,6 @@ RUN apk add --progress --update --no-cache --virtual build-dependencies bash git
 
 COPY . .
 
-# Compile smart contracts to be used by the bot
-RUN npx truffle compile
-
 # If you are building your code for production
 # RUN npm install --only=production
 

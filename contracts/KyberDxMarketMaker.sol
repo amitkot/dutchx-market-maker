@@ -14,7 +14,6 @@ interface KyberNetworkProxy {
 }
 
 
-// TODO: add support to token -> token
 contract KyberDxMarketMaker is Withdrawable {
     // This is the representation of ETH as an ERC20 Token for Kyber Network.
     ERC20 constant internal KYBER_ETH_TOKEN = ERC20(
@@ -205,6 +204,7 @@ contract KyberDxMarketMaker is Withdrawable {
         emit CurrentAuctionState(sellToken, buyToken, auctionIndex, state);
 
         if (state == AuctionState.WAITING_FOR_FUNDING) {
+            // Update the dutchX balance with the funds from the previous auction.
             claimSpecificAuctionFunds(
                 sellToken,
                 buyToken,
@@ -350,7 +350,7 @@ contract KyberDxMarketMaker is Withdrawable {
         }
 
         // DutchExchange logic uses auction start time.
-        /* solhint-disable not-rely-on-time */
+        /* solhint-disable-next-line not-rely-on-time */
         if (auctionStart > now) {
             // After 24 hours have passed since last auction closed,
             // DutchExchange will trigger a new auction even if only the
@@ -365,7 +365,7 @@ contract KyberDxMarketMaker is Withdrawable {
 
         // If over 24 hours have passed, the auction is no longer viable and
         // should be closed.
-        /* solhint-disable not-rely-on-time */
+        /* solhint-disable-next-line not-rely-on-time */
         if (now - auctionStart > 24 hours) {
             return AuctionState.AUCTION_EXPIRED;
         }
@@ -488,7 +488,6 @@ contract KyberDxMarketMaker is Withdrawable {
         uint sellTokenAmountWithFee
     );
 
-    // TODO: maybe verify that pair is listed in dutchx
     function fundAuctionDirection(
         address sellToken,
         address buyToken
@@ -537,7 +536,7 @@ contract KyberDxMarketMaker is Withdrawable {
         buy that amount.
 
         Returns false if ended up not buying.
-        Revets if no auction active or not enough tokens for buying.
+        Reverts if no auction active or not enough tokens for buying.
     */
     function buyInAuction(
         address sellToken,
