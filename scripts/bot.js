@@ -242,7 +242,6 @@ const _runMarketMaker = async (
 
   while (true) {
     try {
-      console.log(1)
       try {
         // TODO: New web3js versions cannot call() a state-changing function:
         // https://github.com/ethereum/web3.js/issues/2411
@@ -262,16 +261,13 @@ const _runMarketMaker = async (
         // .step(sellToken.options.address, buyToken.options.address)
         // .call({ from: account.address })
       } catch (error) {
-        console.log(`1.1 error: ${error}`)
+        logger.error(`error running step.call(): ${error}`)
         shouldAct = false
       }
 
-      console.log(2)
       logger.info(await _prepareStatus(sellToken, buyToken, shouldAct))
 
-      console.log(3)
       if (shouldAct) {
-        console.log(4)
         await sendTxWithTimeout(
           dxmm.methods.step(
             sellToken.options.address,
@@ -280,12 +276,10 @@ const _runMarketMaker = async (
           dxmm.options.address /* to */
         )
 
-        console.log(5)
         state = await dxmm.methods
           .getAuctionState(sellToken.options.address, buyToken.options.address)
           .call()
 
-        console.log(6)
         logger.verbose(
           `State after acting is ${
             auctionState[state]
@@ -297,10 +291,8 @@ const _runMarketMaker = async (
         )
       }
 
-      console.log(7)
       await sleepInSeconds(CYCLE_SLEEP_SECONDS)
     } catch (error) {
-      console.log(8)
       logger.error(`Caught error during loop: ${error}`)
       await sleepInSeconds(CYCLE_SLEEP_SECONDS)
     }
