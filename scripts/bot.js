@@ -39,14 +39,16 @@ const CYCLE_SLEEP_SECONDS =
 // setup is called later when we know sell and buy token names
 let logger
 
-const _setupLogger = (sellToken, buyToken) => {
+const _setupLogger = (logTime, sellToken, buyToken) => {
   logger = winston.createLogger({
     format: winston.format.combine(
       winston.format.timestamp(),
       winston.format.cli(),
       winston.format.label({ label: `${sellToken}->${buyToken}` }),
       winston.format.printf(({ level, message, label, timestamp }) => {
-        return `${timestamp} [${label}] ${level}: ${message}`
+        return logTime
+          ? `${timestamp} [${label}] ${level}: ${message}`
+          : `[${label}] ${level}: ${message}`
       })
     ),
     transports: [new winston.transports.Console({ level: 'debug' })]
@@ -92,7 +94,8 @@ const _runMarketMaker = async (
   web3,
   sellTokenAddress,
   buyTokenAddress,
-  txResendGasPriceFactor
+  txResendGasPriceFactor,
+  logTime
 ) => {
   // Loads the contracts that the bot interacts with
   const _loadContracts = async () => {
@@ -205,7 +208,7 @@ const _runMarketMaker = async (
   const buyTokenSymbol = await contracts.buyToken.methods.symbol().call()
   // TODO(web3js@1.0.0-beta.46): Call functions with single named return value return an object
   // https://github.com/ethereum/web3.js/pull/2420
-  _setupLogger(sellTokenSymbol[0], buyTokenSymbol[0])
+  _setupLogger(logTime, sellTokenSymbol[0], buyTokenSymbol[0])
 
   Object.entries(contracts).forEach(([key, value]) => {
     logger.verbose(`${key} address:\t${value.options.address}`)
@@ -344,6 +347,12 @@ yargs
           describe: 'Buy token address',
           type: 'string'
         })
+        .option('logTime', {
+          demandOption: false,
+          default: false,
+          describe: 'Should logging contain timestamps',
+          type: 'bool'
+        })
     },
     async function(argv) {
       await runWithWeb3(argv.net, web3 => {
@@ -351,7 +360,8 @@ yargs
           web3,
           argv.sellToken,
           argv.buyToken,
-          argv.txResendGasPriceFactor
+          argv.txResendGasPriceFactor,
+          argv.logTime
         )
       })
     }
