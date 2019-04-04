@@ -4,7 +4,7 @@ const web3 = new Web3('http://')
 const yargs = require('yargs')
 const winston = require('winston')
 
-const { sleepInSeconds, str } = require('./util/misc.js')
+const { sleepInSeconds } = require('./util/misc.js')
 const { compileSources } = require('./util/compileContracts.js')
 const { setupSendTx, sendTxWithTimeout } = require('./util/sendTx.js')
 
@@ -302,6 +302,8 @@ const _runMarketMaker = async (
 const runWithWeb3 = async (network, whatToRun) => {
   web3.setProvider(new Web3.providers.HttpProvider(_getNetworkURL(network)))
   web3.eth.transactionPollingTimeout = TX_TIMEOUT_SECONDS
+  // 1 confirmation is enough for our use case
+  web3.eth.transactionConfirmationBlocks = 1
 
   await whatToRun(web3)
 }
