@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const { compileSources } = require('./util/compile_contracts.js')
+const { compileSources } = require('./util/compileContracts.js')
 
 const Web3 = require('web3')
 const fs = require('fs')

@@ -1,12 +1,12 @@
-const { sleepInSeconds, str } = require('./util/misc.js')
-const { compileSources } = require('./util/compile_contracts.js')
-
-const fs = require('fs')
 const Web3 = require('web3')
 // TODO: maybe create the web3 instance later?
 const web3 = new Web3('http://')
 const yargs = require('yargs')
 const winston = require('winston')
+
+const { sleepInSeconds, str } = require('./util/misc.js')
+const { compileSources } = require('./util/compileContracts.js')
+const { setupSendTx, sendTxWithTimeout } = require('./util/sendTx.js')
 
 // Setup environment variables from .env file
 require('dotenv').config()
@@ -14,6 +14,7 @@ require('dotenv').config()
 // Defaults
 const DEFAULT_TX_TIMEOUT_SECONDS = 15
 const DEFAULT_CYCLE_SLEEP_SECONDS = 10
+const DEFAULT_TX_RESEND_GAS_PRICE_FACTOR = 1.2
 
 const PRIVATE = process.env.PRIVATE
 if (typeof PRIVATE === 'undefined') {
@@ -91,8 +92,7 @@ const _runMarketMaker = async (
   web3,
   sellTokenAddress,
   buyTokenAddress,
-  gasPriceGwei,
-  maxGasPriceFactor
+  txResendGasPriceFactor
 ) => {
   // Loads the contracts that the bot interacts with
   const _loadContracts = async () => {
@@ -127,157 +127,7 @@ const _runMarketMaker = async (
       )
     }
 
-    const sellTokenSymbol = await contracts.sellToken.methods.symbol().call()
-    const buyTokenSymbol = await contracts.buyToken.methods.symbol().call()
-    // TODO(web3js@1.0.0-beta.46): Call functions with single named return value return an object
-    _setupLogger(sellTokenSymbol[0], buyTokenSymbol[0])
-
-    Object.entries(contracts).forEach(([key, value]) => {
-      logger.verbose(`${key} address:\t${value.options.address}`)
-    })
     return contracts
-  }
-
-  const { dxmm, sellToken, buyToken, dx } = await _loadContracts()
-
-  // Setting up useful data from the dxmm contract.
-  const auctionState = {}
-  auctionState[await dxmm.methods.WAITING_FOR_FUNDING().call()] =
-    'WAITING_FOR_FUNDING'
-  auctionState[await dxmm.methods.WAITING_FOR_OPP_FUNDING().call()] =
-    'WAITING_FOR_OPP_FUNDING'
-  auctionState[await dxmm.methods.WAITING_FOR_SCHEDULED_AUCTION().call()] =
-    'WAITING_FOR_SCHEDULED_AUCTION'
-  auctionState[await dxmm.methods.AUCTION_IN_PROGRESS().call()] =
-    'AUCTION_IN_PROGRESS'
-  auctionState[await dxmm.methods.WAITING_FOR_OPP_TO_FINISH().call()] =
-    'WAITING_FOR_OPP_TO_FINISH'
-  auctionState[await dxmm.methods.AUCTION_EXPIRED().call()] = 'AUCTION_EXPIRED'
-
-  const account = web3.eth.accounts.privateKeyToAccount(PRIVATE)
-  logger.info(`Running from account: ${account.address}`)
-
-  // Signs and sends transactions.
-  const sendTx = async (txObject, to, value = 0) => {
-    logger.debug('Preparing transaction')
-    const nonce = await web3.eth.getTransactionCount(account.address)
-    const chainId = await web3.eth.net.getId()
-    const txTo = to
-
-    let gasLimit
-    try {
-      gasLimit = await txObject.estimateGas()
-    } catch (e) {
-      gasLimit = 500 * 1000
-      logger.debug(
-        `estimateGas failed: ${e}, using default limit (${gasLimit})`
-      )
-    }
-
-    const txData = txObject.encodeABI()
-    const txFrom = account.address
-
-    const calcGasPrice = iteration => {
-      // TODO: extract to settings
-      const TX_RESEND_GAS_PRICE_FACTOR = 1.2
-
-      let price = gasPriceGwei * TX_RESEND_GAS_PRICE_FACTOR ** iteration
-      price -= price % 1
-      // XXX
-      return web3.utils
-        .toBN(price)
-        .mul(web3.utils.toBN(10 ** 9))
-        .toNumber()
-    }
-
-    const prepareSignedTx = async gasPrice => {
-      const tx = {
-        from: txFrom,
-        to: txTo,
-        nonce: nonce,
-        data: txData,
-        value: value,
-        gas: gasLimit,
-        chainId: chainId,
-        gasPrice: gasPrice
-      }
-      logger.debug(`tx: ${str(tx)}`)
-      return web3.eth.accounts.signTransaction(
-        tx,
-        account.privateKey /* privateKey */
-      )
-    }
-
-    let iteration = 0
-    let gasPrice
-
-    // Returning a promise to make the the sending of the tx awaitable
-    return new Promise(async (resolve, reject) => {
-      try {
-        // TODO:Raise gas price each time send timeout is reached
-        gasPrice = calcGasPrice(iteration)
-        if (gasPrice > maxGasPriceFactor * gasPriceGwei * 10 ** 9) {
-          // Cannot increase gas price any more
-          const msg = 'Cannot increase gas price any more'
-          logger.warning(msg)
-          reject(msg)
-        }
-
-        logger.debug(`gasPrice is ${gasPrice}`)
-
-        const signedTx = await prepareSignedTx(gasPrice)
-        logger.debug(`signed tx: ${str(signedTx)}`)
-
-        web3.eth
-          .sendSignedTransaction(signedTx.rawTransaction)
-          .once('transactionHash', hash => {
-            logger.debug(`onceTransactionHash hash: ${hash}`)
-          })
-          .once('receipt', receipt => {
-            logger.debug(`onceReceipt receipt: ${str(receipt)}`)
-          })
-          // XXX spamming?
-          .on('confirmation', (confirmationNumber, receipt) => {
-            logger.debug(
-              `onConfirmation ConfirmationNumber: ${confirmationNumber}`
-            )
-            logger.debug(`onConfirmation Receipt: ${receipt.status}`)
-          })
-          .on('error', error => {
-            // confirmation timeout
-            if (
-              error.message.startsWith(
-                'Timeout exceeded during the transaction confirmation process'
-              )
-            ) {
-              logger.debug(`TX confirmation timeout, try increasing gas price`)
-              iteration++
-              // previous tx already confirmed so nonce no longer available
-            } else if (
-              error.message.startsWith(
-                "Error: the tx doesn't have the correct nonce."
-              )
-            ) {
-              logger.debug(
-                'Previously sent tx with this nonce already confirmed'
-              )
-            } else {
-              logger.error(
-                `onError during sendSignedTransaction: "${error}", returning`
-              )
-              reject(error)
-            }
-          })
-          .then(receipt => {
-            logger.debug(`then called with receipt: ${str(receipt)}`)
-            logger.debug('done sending tx')
-            resolve(receipt)
-          })
-      } catch (error) {
-        logger.error(`Error during sendTx: "${error}", returning`)
-        reject(error)
-      }
-    })
   }
 
   const _prepareStatus = async (sellToken, buyToken, shouldAct) => {
@@ -294,6 +144,7 @@ const _runMarketMaker = async (
         sellToken.options.address,
         buyToken.options.address,
         // TODO(web3js@1.0.0-beta.46): Call functions with single named return value return an object
+        // https://github.com/ethereum/web3.js/pull/2420
         auctionIndex[0]
       )
       .call()
@@ -303,6 +154,7 @@ const _runMarketMaker = async (
         sellToken.options.address,
         buyToken.options.address,
         // TODO(web3js@1.0.0-beta.46): Call functions with single named return value return an object
+        // https://github.com/ethereum/web3.js/pull/2420
         auctionIndex[0],
         dxmm.options.address
       )
@@ -316,12 +168,63 @@ const _runMarketMaker = async (
       )
       .call()
 
-    return `#${auctionIndex}: ${auctionState[state]}, price: ${priceStr(
+    // TODO(web3js@1.0.0-beta.46): Call functions with single named return value return an object
+    // https://github.com/ethereum/web3.js/pull/2420
+    return `#${auctionIndex[0]}: ${auctionState[state]}, price: ${priceStr(
       price
     )}, kyber: ${priceStr(kyberPrice)}, diff: ${(
       priceStr(price) - priceStr(kyberPrice)
     ).toFixed(10)}, act? ${shouldAct}`
   }
+
+  const _prepareAuctionStates = async dxmm => {
+    // Setting up useful data from the dxmm contract.
+    const auctionState = {}
+    auctionState[await dxmm.methods.WAITING_FOR_FUNDING().call()] =
+      'WAITING_FOR_FUNDING'
+    auctionState[await dxmm.methods.WAITING_FOR_OPP_FUNDING().call()] =
+      'WAITING_FOR_OPP_FUNDING'
+    auctionState[await dxmm.methods.WAITING_FOR_SCHEDULED_AUCTION().call()] =
+      'WAITING_FOR_SCHEDULED_AUCTION'
+    auctionState[await dxmm.methods.AUCTION_IN_PROGRESS().call()] =
+      'AUCTION_IN_PROGRESS'
+    auctionState[await dxmm.methods.WAITING_FOR_OPP_TO_FINISH().call()] =
+      'WAITING_FOR_OPP_TO_FINISH'
+    auctionState[await dxmm.methods.AUCTION_EXPIRED().call()] =
+      'AUCTION_EXPIRED'
+
+    return auctionState
+  }
+
+  // ------------------------------------------------
+  //                      SETUP
+  // ------------------------------------------------
+  const contracts = await _loadContracts()
+
+  const sellTokenSymbol = await contracts.sellToken.methods.symbol().call()
+  const buyTokenSymbol = await contracts.buyToken.methods.symbol().call()
+  // TODO(web3js@1.0.0-beta.46): Call functions with single named return value return an object
+  // https://github.com/ethereum/web3.js/pull/2420
+  _setupLogger(sellTokenSymbol[0], buyTokenSymbol[0])
+
+  Object.entries(contracts).forEach(([key, value]) => {
+    logger.verbose(`${key} address:\t${value.options.address}`)
+  })
+  const { dxmm, sellToken, buyToken, dx } = contracts
+
+  const auctionState = await _prepareAuctionStates(dxmm)
+
+  const account = web3.eth.accounts.privateKeyToAccount(PRIVATE)
+  logger.info(`Running from account: ${account.address}`)
+
+  setupSendTx({
+    web3: web3,
+    logger: logger,
+    fromAddress: account.address,
+    fromPrivate: account.privateKey,
+    pollingTimeoutInSeconds: TX_TIMEOUT_SECONDS,
+    txResendGasPriceFactor: txResendGasPriceFactor
+  })
 
   // ------------------------------------------------
   //                  FLOW START
@@ -361,14 +264,12 @@ const _runMarketMaker = async (
       }
 
       console.log(2)
-      logger.verbose(await _prepareStatus(sellToken, buyToken, shouldAct))
+      logger.info(await _prepareStatus(sellToken, buyToken, shouldAct))
 
       console.log(3)
-      // XXX
-      shouldAct = true
       if (shouldAct) {
         console.log(4)
-        await sendTx(
+        await sendTxWithTimeout(
           dxmm.methods.step(
             sellToken.options.address,
             buyToken.options.address
@@ -424,17 +325,11 @@ yargs
           describe: 'Ethereum network',
           type: 'string'
         })
-        .option('gasPriceGwei', {
+        .option('txResendGasPriceFactor', {
           demandOption: false,
-          default: '5',
-          describe: 'Initial gas price in Gwei',
-          type: 'number'
-        })
-        .option('maxGasPriceFactor', {
-          demandOption: false,
-          default: '10',
+          default: DEFAULT_TX_RESEND_GAS_PRICE_FACTOR,
           describe:
-            'Maximum factor for increased gas price (e.g. for initial 5 Gwei + factor 2 -> max is 10 Gwei)',
+            'When TX times out the TX is resent using previous gas price * this factor',
           type: 'number'
         })
         .option('st', {
@@ -456,8 +351,7 @@ yargs
           web3,
           argv.sellToken,
           argv.buyToken,
-          argv.gasPriceGwei,
-          argv.maxGasPriceFactor
+          argv.txResendGasPriceFactor
         )
       })
     }
@@ -468,5 +362,3 @@ yargs
 // 1 - claim
 // 2 - dxmm.withdrawFromDx
 // 3 - use withdrawable calls
-
-// TODO: add command for transfering tokens to dxmm
