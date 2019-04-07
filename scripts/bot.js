@@ -80,7 +80,7 @@ const _getNetworkURL = net => {
     case 'kovan':
       return 'https://kovan.infura.io/'
 
-    case 'main':
+    case 'mainnet':
     case 'live':
       return 'https://mainnet.infura.io/'
 
