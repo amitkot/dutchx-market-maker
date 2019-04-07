@@ -167,7 +167,9 @@ const _runMarketMaker = async (
       .getKyberRate(
         sellToken.options.address,
         buyToken.options.address,
-        buyAmount
+        // TODO(web3js@1.0.0-beta.46): Call functions with single named return value return an object
+        // https://github.com/ethereum/web3.js/pull/2420
+        buyAmount[0]
       )
       .call()
 
