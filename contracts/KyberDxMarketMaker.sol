@@ -491,13 +491,14 @@ contract KyberDxMarketMaker is Withdrawable {
     function executeTransaction(
         address destination,
         uint value,
-        bytes data
+        bytes memory data
     )
         public
         onlyAdmin
     {
-        if (destination.call.value(value)(data)) {
-            Execution(true, msg.sender, destination, value, data);
+        (bool success, bytes memory result) = destination.call.value(value)(data);
+        if (success) {
+            emit Execution(true, msg.sender, destination, value, data);
         } else {
             revert();
         }
