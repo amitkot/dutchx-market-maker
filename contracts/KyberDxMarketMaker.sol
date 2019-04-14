@@ -479,6 +479,41 @@ contract KyberDxMarketMaker is Withdrawable {
         }
     }
 
+    event Execution(
+        bool success,
+        address caller,
+        address destination,
+        uint value,
+        bytes data
+    );
+
+    // FFU
+    function executeTransaction(
+        address destination,
+        uint value,
+        bytes data
+    )
+        public
+        onlyAdmin
+    {
+        if (destination.call.value(value)(data)) {
+            Execution(true, msg.sender, destination, value, data);
+        } else {
+            revert();
+        }
+    }
+
+    function adminBuyInAuction(
+        address sellToken,
+        address buyToken
+    )
+        public
+        onlyAdmin
+        returns (bool bought)
+    {
+        return buyInAuction(sellToken, buyToken);
+    }
+
     event AuctionDirectionFunded(
         address indexed sellToken,
         address indexed buyToken,
