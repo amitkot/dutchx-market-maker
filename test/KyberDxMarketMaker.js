@@ -1679,7 +1679,10 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         .div(p.den)
         .sub(buyVolume1)
 
-      calculatedBuyTokens.should.be.eq.BN(remainingBuyVolume)
+      const diffIsSmall = calculatedBuyTokens
+        .sub(remainingBuyVolume)
+        .lte(remainingBuyVolume.divn(10000))
+      diffIsSmall.should.be.true
     })
 
     it('no auction triggered', async () => {
