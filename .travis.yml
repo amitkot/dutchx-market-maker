@@ -8,7 +8,7 @@ install:
 script:
     - npm test
 before_script:
-    - npm run testrpc > /dev/null &
-        - sleep 5
+    - ./node_modules/.bin/ganache-cli -d --defaultBalanceEther 500000000 > /dev/null &
+		- sleep 5
 # after_script:
     #- npm run coverage && cat coverage/lcov.info | coveralls
