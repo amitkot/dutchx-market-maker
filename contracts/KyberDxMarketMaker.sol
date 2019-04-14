@@ -381,8 +381,8 @@ contract KyberDxMarketMaker is Withdrawable {
     }
 
     function getKyberRate(
-        address _sellToken,
-        address _buyToken,
+        address srcToken,
+        address destToken,
         uint amount
     )
         public
@@ -395,17 +395,15 @@ contract KyberDxMarketMaker is Withdrawable {
         // have 18 decimals and is handled as though it is rate / 10**18.
         // TODO: handle tokens with number of decimals other than 18.
         require(
-            ERC20(_sellToken).decimals() == 18 && ERC20(_buyToken).decimals() == 18,
+            ERC20(srcToken).decimals() == 18 && ERC20(destToken).decimals() == 18,
             "Only 18 decimals tokens are supported"
         );
 
         // Kyber uses a special constant address for representing ETH.
-        ERC20 sellToken = _sellToken == address(weth) ? KYBER_ETH_TOKEN : ERC20(_sellToken);
-        ERC20 buyToken = _buyToken == address(weth) ? KYBER_ETH_TOKEN : ERC20(_buyToken);
         uint rate;
         (rate, ) = kyberNetworkProxy.getExpectedRate(
-            sellToken,
-            buyToken,
+            srcToken == address(weth) ? KYBER_ETH_TOKEN : ERC20(srcToken),
+            destToken == address(weth) ? KYBER_ETH_TOKEN : ERC20(destToken),
             amount
         );
 
@@ -455,17 +453,18 @@ contract KyberDxMarketMaker is Withdrawable {
         // No price for this auction, it is a future one.
         if (den == 0) return 0;
 
-        uint wantedBuyVolume = div(mul(sellVolume, num), den);
+        uint desiredBuyVolume = div(mul(sellVolume, num), den);
 
+        // Calculate available buy volume
         uint auctionSellVolume = dx.sellVolumesCurrent(sellToken, buyToken);
-        uint buyVolume = dx.buyVolumes(sellToken, buyToken);
-        uint outstandingBuyVolume = atleastZero(
-            int(mul(auctionSellVolume, num) / den - buyVolume)
+        uint existingBuyVolume = dx.buyVolumes(sellToken, buyToken);
+        uint availableBuyVolume = atleastZero(
+            int(mul(auctionSellVolume, num) / den - existingBuyVolume)
         );
 
-        return wantedBuyVolume < outstandingBuyVolume
-            ? wantedBuyVolume
-            : outstandingBuyVolume;
+        return desiredBuyVolume < availableBuyVolume
+            ? desiredBuyVolume
+            : availableBuyVolume;
     }
 
     function atleastZero(int a)
@@ -617,7 +616,8 @@ contract KyberDxMarketMaker is Withdrawable {
         uint dutchExchangePriceNum,
         uint dutchExchangePriceDen,
         uint kyberPriceNum,
-        uint kyberPriceDen
+        uint kyberPriceDen,
+        bool shouldBuy
     );
 
     function isPriceRightForBuying(
@@ -643,9 +643,15 @@ contract KyberDxMarketMaker is Withdrawable {
             auctionIndex
         );
 
+        // Compare with the price a user will get if they were buying
+        // sellToken using buyToken.
         uint kNum;
         uint kDen;
-        (kNum, kDen) = getKyberRate(sellToken, buyToken, amount);
+        (kNum, kDen) = getKyberRate(
+            buyToken, /* srcToken */
+            sellToken, /* destToken */
+            amount
+        );
 
         // TODO: Check for overflow explicitly?
         bool shouldBuy = mul(dNum, kDen) <= mul(kNum, dDen);
@@ -658,7 +664,8 @@ contract KyberDxMarketMaker is Withdrawable {
             dNum,
             dDen,
             kNum,
-            kDen
+            kDen,
+            shouldBuy
         );
         return shouldBuy;
     }
