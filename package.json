@@ -7,7 +7,9 @@
     "test": "test"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "truffle test",
+    "testrpc": "./node_modules/.bin/ganache-cli -d --defaultBalanceEther 500000000",
+    "coverage": "./node_modules/.bin/solidity-coverage"
   },
   "repository": {
     "type": "git",
@@ -49,8 +51,10 @@
     "eslint-plugin-prettier": "^3.0.1",
     "eslint-plugin-promise": "^4.0.1",
     "eslint-plugin-standard": "^4.0.0",
+    "ganache-cli": "^6.4.2",
     "prettier": "^1.16.1",
     "prettier-standard": "^8.0.1",
+    "solidity-coverage": "^0.5.11",
     "truffle-assertions": "^0.6.3",
     "truffle-flattener": "^1.2.11"
   }

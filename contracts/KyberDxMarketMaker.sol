@@ -484,7 +484,8 @@ contract KyberDxMarketMaker is Withdrawable {
         address caller,
         address destination,
         uint value,
-        bytes data
+        bytes data,
+        bytes result
     );
 
     // FFU
@@ -498,7 +499,7 @@ contract KyberDxMarketMaker is Withdrawable {
     {
         (bool success, bytes memory result) = destination.call.value(value)(data);
         if (success) {
-            emit Execution(true, msg.sender, destination, value, data);
+            emit Execution(true, msg.sender, destination, value, data, result);
         } else {
             revert();
         }
