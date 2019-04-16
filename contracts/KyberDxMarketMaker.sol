@@ -682,9 +682,11 @@ contract KyberDxMarketMaker is Withdrawable {
 
         // Compare with the price a user will get if they were buying
         // sellToken using buyToken.
+        // Note: Kyber returns destToken / srcToken rate so we reverse the kNum
+        // and kDen order.
         uint kNum;
         uint kDen;
-        (kNum, kDen) = getKyberRate(
+        (kDen, kNum) = getKyberRate(
             buyToken, /* srcToken */
             sellToken, /* destToken */
             amount

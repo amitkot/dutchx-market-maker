@@ -163,15 +163,20 @@ const _runMarketMaker = async (
       )
       .call()
 
-    const kyberPrice = await dxmm.methods
+    const kyberReversePrice = await dxmm.methods
       .getKyberRate(
-        sellToken.options.address,
         buyToken.options.address,
+        sellToken.options.address,
         // TODO(web3js@1.0.0-beta.46): Call functions with single named return value return an object
         // https://github.com/ethereum/web3.js/pull/2420
         buyAmount[0]
       )
       .call()
+    // Reversing kyber price as we are querying for buying sellToken using buyToken.
+    const kyberPrice = {
+      num: kyberReversePrice.den,
+      den: kyberReversePrice.num
+    }
 
     // TODO(web3js@1.0.0-beta.46): Call functions with single named return value return an object
     // https://github.com/ethereum/web3.js/pull/2420
