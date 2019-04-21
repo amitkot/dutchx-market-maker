@@ -111,16 +111,16 @@ async function deployContract(
   await sendTx(deploy)
 
   const encodedCtorArgs = web3.eth.abi.encodeParameters(ctorArgTypes, ctorArgs)
-  console.log('ABI-Encoded onstructor args:', encodedCtorArgs)
+  console.log('ABI-Encoded constructor args:', encodedCtorArgs)
 
   myContract.options.address = address
 
   return [address, myContract]
 }
 
-// Rinkeby
-const DUTCH_EXCHANGE_ADDRESS = '0x25b8c27508a59bf498646d8819dc349876789f83' // Rinkeby
-const KYBER_NETWORK_PROXY_ADDRESS = '0x3f380cBF53583bD3b3F29bf7C3e652cf1A70e58E' // Rinkeby
+// Mainnet
+const DUTCH_EXCHANGE_ADDRESS = '0xb9812E2fA995EC53B5b6DF34d21f9304762C5497' // Mainnet
+const KYBER_NETWORK_PROXY_ADDRESS = '0x818E6FECD516Ecc3849DAf6845e3EC868087B755' // Mainnet
 
 async function main() {
   nonce = await web3.eth.getTransactionCount(account.address)
