@@ -69,21 +69,20 @@ const setup = options => {
 
 const sendTxWithTimeout = async (txObject, to, value = 0) => {
   logger.debug('Preparing transaction')
+  const data = txObject.encodeABI()
   const nonce = await web3.eth.getTransactionCount(fromAddress)
   const chainId = await web3.eth.net.getId()
-  const txTo = to
 
   let gasLimit
   try {
-    gasLimit = await txObject.estimateGas()
+    gasLimit = await txObject.estimateGas({ from: fromAddress, value: value })
+    logger.debug(`estimated gas calculated: ${gasLimit}`)
+    gasLimit *= 1.2
+    gasLimit -= gasLimit % 1
   } catch (e) {
-    // TODO: check if this is a reasonable limit
     gasLimit = 500 * 1000
     logger.debug(`estimateGas failed: ${e}, using default limit (${gasLimit})`)
   }
-
-  const txData = txObject.encodeABI()
-  const txFrom = fromAddress
 
   const initialGasPrice = await web3.eth.getGasPrice()
   logger.debug(`initial gas price is ${initialGasPrice}`)
@@ -96,10 +95,10 @@ const sendTxWithTimeout = async (txObject, to, value = 0) => {
 
   const prepareSignedTx = async gasPrice => {
     const tx = {
-      from: txFrom,
-      to: txTo,
+      from: fromAddress,
+      to: to,
       nonce: nonce,
-      data: txData,
+      data: data,
       value: value,
       gas: gasLimit,
       chainId: chainId,
