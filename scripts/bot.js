@@ -95,7 +95,8 @@ const _runMarketMaker = async (
   sellTokenAddress,
   buyTokenAddress,
   txResendGasPriceFactor,
-  logTime
+  logTime,
+  dontSendTx
 ) => {
   // Loads the contracts that the bot interacts with
   const _loadContracts = async () => {
@@ -274,7 +275,7 @@ const _runMarketMaker = async (
 
       logger.info(await _prepareStatus(sellToken, buyToken, shouldAct))
 
-      if (shouldAct) {
+      if (shouldAct && !dontSendTx) {
         await sendTxWithTimeout(
           dxmm.methods.step(
             sellToken.options.address,
@@ -354,6 +355,12 @@ yargs
           describe: 'Should logging contain timestamps',
           type: 'bool'
         })
+        .option('dontSendTx', {
+          demandOption: false,
+          default: false,
+          describe: 'Should bot avoid actually sending tx',
+          type: 'bool'
+        })
     },
     async function(argv) {
       await runWithWeb3(argv.net, web3 => {
@@ -362,7 +369,8 @@ yargs
           argv.sellToken,
           argv.buyToken,
           argv.txResendGasPriceFactor,
-          argv.logTime
+          argv.logTime,
+          argv.dontSendTx
         )
       })
     }
