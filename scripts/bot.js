@@ -134,6 +134,22 @@ const _runMarketMaker = async (
     return contracts
   }
 
+  const _parseBooleanRes = res => {
+    const prefix = res.slice(0, 66)
+    if (
+      prefix ===
+      '0x0000000000000000000000000000000000000000000000000000000000000001'
+    )
+      return true
+    if (
+      prefix ===
+      '0x0000000000000000000000000000000000000000000000000000000000000000'
+    )
+      return false
+    const errorString = web3.utils.hexToAscii('0x' + res.slice(138, -6))
+    throw Error(`Call reverted: ${errorString}, (res: ${res})`)
+  }
+
   const _prepareStatus = async (sellToken, buyToken, shouldAct) => {
     const state = await dxmm.methods
       .getAuctionState(sellToken.options.address, buyToken.options.address)
@@ -251,25 +267,23 @@ const _runMarketMaker = async (
   while (true) {
     try {
       try {
-        // TODO: New web3js versions cannot call() a state-changing function:
-        // https://github.com/ethereum/web3.js/issues/2411
+        // Web3js does not recognize reverted contract function calls. This function is boolean and
+        // when it reverts, web3js returns "true" instead of an error.
         let encoded = await dxmm.methods
           .step(sellToken.options.address, buyToken.options.address)
           .encodeABI()
-        shouldAct = Boolean(
-          Number(
-            await web3.eth.call({
-              to: dxmm.options.address,
-              from: account.address,
-              data: encoded
-            })
-          )
+        shouldAct = _parseBooleanRes(
+          await web3.eth.call({
+            to: dxmm.options.address,
+            from: account.address,
+            data: encoded
+          })
         )
         // shouldAct = await dxmm.methods
         // .step(sellToken.options.address, buyToken.options.address)
         // .call({ from: account.address })
       } catch (error) {
-        logger.error(`error running step.call(): ${error}`)
+        logger.error(`step.call(): ${error}`)
         shouldAct = false
       }
 
