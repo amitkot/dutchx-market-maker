@@ -665,13 +665,6 @@ contract KyberDxMarketMaker is Withdrawable {
         internal
         returns (bool)
     {
-        uint amount = calculateAuctionBuyTokens(
-            sellToken,
-            buyToken,
-            auctionIndex,
-            address(this)
-        );
-
         uint dNum;
         uint dDen;
         (dNum, dDen) = dx.getCurrentAuctionPrice(
@@ -680,10 +673,18 @@ contract KyberDxMarketMaker is Withdrawable {
             auctionIndex
         );
 
+        uint amount = calculateAuctionBuyTokens(
+            sellToken,
+            buyToken,
+            auctionIndex,
+            address(this)
+        );
+
         // Compare with the price a user will get if they were buying
         // sellToken using buyToken.
-        // Note: Kyber returns destToken / srcToken rate so we reverse the kNum
-        // and kDen order.
+        // Note: Kyber returns destToken / srcToken rate (i.e. sellToken / buyToken
+        // rate in this case) so we use a 1 / rate by reversing the kNum and kDen
+        // order.
         uint kNum;
         uint kDen;
         (kDen, kNum) = getKyberRate(

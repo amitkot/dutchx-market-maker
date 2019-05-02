@@ -211,11 +211,12 @@ contract('TestingKyberDxMarketMaker', async accounts => {
     // Using 0 amount as mock kyber contract returns fixed rate anyway.
     const kyberRate = await dxmm.getKyberRate(knc.address, weth.address, 0)
 
-    // 1 - dividing by 1000 to avoid reverts due to overflow
-    // 2 - reduce price to have listed token in Kyber price (auction starts at x2
+    // 1 - Divide by 1000 to avoid reverts due to overflow
+    // 2 - Reduce price to have listed token in Kyber price (auction starts at x2
     //     and we close immediately)
-    const initialClosingPriceNum = kyberRate.num.divn(1000).divn(2)
-    const initialClosingPriceDen = kyberRate.den.divn(1000)
+    // 3 - Reverse the rate as dx uses src/dest rates while kyber uses dest/src
+    const initialClosingPriceNum = kyberRate.den.divn(1000).divn(2)
+    const initialClosingPriceDen = kyberRate.num.divn(1000)
     dbg(
       `initial rate is knc => weth is ${initialClosingPriceNum} / ${initialClosingPriceDen}`
     )
@@ -2276,8 +2277,14 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         sellToken.address /* destToken */,
         buyAmount
       )
-      const a = dxPrice.num.mul(kyberPrice.den)
-      const b = kyberPrice.num.mul(dxPrice.den)
+      // Note: Kyber returns destToken / srcToken rate (i.e. sellToken / buyToken
+      // rate in this case) so we use a 1 / rate by reversing the kNum and kDen
+      // order.
+      const kNum = kyberPrice.den
+      const kDen = kyberPrice.num
+
+      const a = dxPrice.num.mul(kDen)
+      const b = kNum.mul(dxPrice.den)
       dbg(
         `dutchx price is ${dxPrice.num}/${dxPrice.den} = ${dxPrice.num /
           dxPrice.den}`
@@ -2457,14 +2464,17 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         knc.address /* destToken */,
         wethAmount
       )
+      // Note: Kyber returns destToken / srcToken rate (i.e. sellToken / buyToken
+      // rate in this case) so we use a 1 / rate by reversing the kNum and kDen
+      // order.
+      const kNum = kyberPrice.den
+      const kDen = kyberPrice.num
 
       dbg(`dx price ${dxPrice.num.toString()} / ${dxPrice.den.toString()}`)
-      dbg(
-        `kyber price ${kyberPrice.num.toString()} / ${kyberPrice.den.toString()}`
-      )
+      dbg(`kyber price ${kNum.toString()} / ${kDen.toString()}`)
 
-      const a = kyberPrice.num.mul(dxPrice.den)
-      const b = dxPrice.num.mul(kyberPrice.den)
+      const a = kNum.mul(dxPrice.den)
+      const b = dxPrice.num.mul(kDen)
       a.should.be.lt.BN(b)
 
       const actionRequired = await dxmm.step.call(knc.address, weth.address, {
@@ -2593,9 +2603,13 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
       await fundDxmmAndDepositToDxToBuyInAuction(knc, weth, auctionIndex)
 
-      const res = await dxmm.step(knc.address, weth.address, {
+      const shouldAct = await dxmm.step.call(knc.address, weth.address, {
         from: operator
       })
+      await dxmm.step(knc.address, weth.address, {
+        from: operator
+      })
+      shouldAct.should.be.true
 
       // Now finish the opposite direction
       await buyEverythingInAuctionDirection(weth, knc, auctionIndex, buyer1)
@@ -2691,6 +2705,30 @@ contract('TestingKyberDxMarketMaker', async accounts => {
         weth.address
       )
       newAuctionIndex.should.be.eq.BN(auctionIndex.addn(1))
+    })
+
+    it('step after price is good and other buyer bought -> buy', async () => {
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+      await dxmmFundDepositTriggerBothSides(knc, weth)
+
+      const TIME_10_HOURS_IN_SECONDS = 60 * 60 * 10
+      await waitTimeInSeconds(TIME_10_HOURS_IN_SECONDS)
+
+      const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+      await buyAuctionTokens(
+        knc,
+        auctionIndex,
+        1000000,
+        user,
+        true /* addFee */
+      )
+
+      const shouldAct = await dxmm.step.call(knc.address, weth.address, {
+        from: operator
+      })
+
+      shouldAct.should.be.true
     })
 
     it('several cycles')
