@@ -250,19 +250,7 @@ contract KyberDxMarketMaker is Withdrawable {
         view
         returns (bool)
     {
-        uint buyVolume = dx.buyVolumes(sellToken, buyToken);
-
-        // Overbuy is when a part of a buy order clears an auction
-        // In that case we only process the part before the overbuy
-        // To calculate overbuy, we first get current price
-        uint sellVolume = dx.sellVolumesCurrent(sellToken, buyToken);
-
-        uint num;
-        uint den;
-        (num, den) = dx.getCurrentAuctionPrice(sellToken, buyToken, auctionIndex);
-        // 10^30 * 10^37 = 10^67
-        uint outstandingVolume = atleastZero(int(div(mul(sellVolume, num), sub(den, buyVolume))));
-        return amount >= outstandingVolume;
+        return amount >= auctionOutstandingVolume(sellToken, buyToken, auctionIndex);
     }
 
     // TODO: consider adding a "safety margin" to compensate for accuracy issues.
@@ -363,6 +351,8 @@ contract KyberDxMarketMaker is Withdrawable {
             }
         }
 
+        uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
+
         // If over 24 hours have passed, the auction is no longer viable and
         // should be closed.
         /* solhint-disable-next-line not-rely-on-time */
@@ -370,10 +360,14 @@ contract KyberDxMarketMaker is Withdrawable {
             return AuctionState.AUCTION_EXPIRED;
         }
 
-        uint auctionIndex = dx.getAuctionIndex(sellToken, buyToken);
         uint closingPriceDen;
         (, closingPriceDen) = dx.closingPrices(sellToken, buyToken, auctionIndex);
         if (closingPriceDen == 0) {
+            // If auction has no remaining outstanding sell volume it should also be
+            // considered expired.
+            if (auctionOutstandingVolume(sellToken, buyToken, auctionIndex) == 0) {
+                return AuctionState.AUCTION_EXPIRED;
+            }
             return AuctionState.AUCTION_IN_PROGRESS;
         }
 
@@ -408,6 +402,25 @@ contract KyberDxMarketMaker is Withdrawable {
         );
 
         return (rate, 10 ** 18);
+    }
+
+    function auctionOutstandingVolume(
+        address sellToken,
+        address buyToken,
+        uint auctionIndex
+    )
+        public
+        view
+        returns (uint)
+    {
+        uint buyVolume = dx.buyVolumes(sellToken, buyToken);
+        uint sellVolume = dx.sellVolumesCurrent(sellToken, buyToken);
+
+        uint num;
+        uint den;
+        (num, den) = dx.getCurrentAuctionPrice(sellToken, buyToken, auctionIndex);
+        // sellVolume * num / den - buyVolume
+        return atleastZero(int(sub(div(mul(sellVolume, num), den), buyVolume)));
     }
 
     function tokensSoldInCurrentAuction(

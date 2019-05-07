@@ -669,6 +669,28 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       .sub(buyVolume)
   }
 
+  const calculateOutstandingVolume = async (
+    sellToken,
+    buyToken,
+    auctionIndex
+  ) => {
+    const buyVolume = await dx.buyVolumes(sellToken.address, buyToken.address)
+    const sellVolume = await dx.sellVolumesCurrent(
+      sellToken.address,
+      buyToken.address
+    )
+    const dxPrice = await dx.getCurrentAuctionPrice(
+      sellToken.address,
+      buyToken.address,
+      auctionIndex
+    )
+    const outstanding = sellVolume
+      .mul(dxPrice.num)
+      .div(dxPrice.den)
+      .sub(buyVolume)
+    return outstanding > 0 ? outstanding : new BN(0)
+  }
+
   before('setup accounts', async () => {
     admin = accounts[1]
     user = accounts[2]
@@ -1326,6 +1348,46 @@ contract('TestingKyberDxMarketMaker', async accounts => {
 
       state.should.be.eq.BN(WAITING_FOR_FUNDING)
       oppState.should.be.eq.BN(WAITING_FOR_SCHEDULED_AUCTION)
+    })
+
+    it('No outstanding volume due to price drop -> EXPIRED', async () => {
+      // 1 - list token
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+      // 2 - trigger auction #2 and wait for it to start
+      await dxmmFundDepositTriggerBothSides(knc, weth)
+      const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+      await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
+
+      // 3 - some user buy 99% of outstanding volume
+      const outstandingVolume = await calculateOutstandingVolume(
+        knc,
+        weth,
+        auctionIndex
+      )
+      const volumeToBuy = outstandingVolume.muln(99).divn(100)
+      await buyAuctionTokens(
+        knc,
+        auctionIndex,
+        volumeToBuy,
+        user,
+        true /* addFee */
+      )
+
+      // 4 - wait for price drop to reduce outstanding volume to go to 0
+      const TIME_10_HOURS_IN_SECONDS = 60 * 60 * 10
+      await waitTimeInSeconds(TIME_10_HOURS_IN_SECONDS)
+
+      const currentlyOutstanding = await calculateOutstandingVolume(
+        knc,
+        weth,
+        auctionIndex
+      )
+
+      const state = await dxmm.getAuctionState(knc.address, weth.address)
+
+      currentlyOutstanding.should.be.eq.BN(0)
+      state.should.be.eq.BN(AUCTION_EXPIRED)
     })
   })
 
@@ -2729,6 +2791,55 @@ contract('TestingKyberDxMarketMaker', async accounts => {
       })
 
       shouldAct.should.be.true
+    })
+
+    it('step after other buyer bought everything in auction', async () => {
+      // 1 - list token
+      const knc = await deployTokenAddToDxAndClearFirstAuction()
+
+      // 2 - trigger auction #2 and wait for it to start
+      await dxmmFundDepositTriggerBothSides(knc, weth)
+      const auctionIndex = await dx.getAuctionIndex(knc.address, weth.address)
+      await waitForTriggeredAuctionToStart(knc, weth, auctionIndex)
+
+      // 3 - some user buy 99% of outstanding volume
+      const outstandingVolume = await calculateOutstandingVolume(
+        knc,
+        weth,
+        auctionIndex
+      )
+      const volumeToBuy = outstandingVolume.muln(99).divn(100)
+      await buyAuctionTokens(
+        knc,
+        auctionIndex,
+        volumeToBuy,
+        user,
+        true /* addFee */
+      )
+
+      // 4 - wait for price drop to reduce outstanding volume to go to 0
+      const TIME_10_HOURS_IN_SECONDS = 60 * 60 * 10
+      await waitTimeInSeconds(TIME_10_HOURS_IN_SECONDS)
+
+      const currentlyOutstanding = await calculateOutstandingVolume(
+        knc,
+        weth,
+        auctionIndex
+      )
+
+      const shouldAct = await dxmm.step.call(knc.address, weth.address, {
+        from: operator
+      })
+      await dxmm.step(knc.address, weth.address, {
+        from: operator
+      })
+      const stateAfter = await dxmm.getAuctionState(knc.address, weth.address)
+
+      shouldAct.should.be.true
+
+      currentlyOutstanding.should.be.eq.BN(0)
+      shouldAct.should.be.true
+      stateAfter.should.be.eq.BN(WAITING_FOR_OPP_TO_FINISH)
     })
 
     it('several cycles')
